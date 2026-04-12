@@ -1,6 +1,45 @@
 """Dataset materialization helpers."""
 
-from .materialize import build_train_dataset, build_valid_dataset
+from __future__ import annotations
+
+from typing import Any
+
+from .rcabench import (
+    build_rl_manifest_samples,
+    build_sft_manifest_samples,
+    build_standardized_manifests,
+    iter_case_dirs,
+    load_case_bundle,
+)
 from .samples import load_manifest_samples
 
-__all__ = ["build_train_dataset", "build_valid_dataset", "load_manifest_samples"]
+
+def build_train_dataset(config: Any):
+    from .materialize import build_train_dataset as _build_train_dataset
+
+    return _build_train_dataset(config)
+
+
+def build_valid_dataset(config: Any):
+    from .materialize import build_valid_dataset as _build_valid_dataset
+
+    return _build_valid_dataset(config)
+
+
+def build_sft_dataset_from_manifest(*args: Any, **kwargs: Any):
+    from .sft import build_sft_dataset_from_manifest as _build_sft_dataset_from_manifest
+
+    return _build_sft_dataset_from_manifest(*args, **kwargs)
+
+
+__all__ = [
+    "build_rl_manifest_samples",
+    "build_sft_dataset_from_manifest",
+    "build_sft_manifest_samples",
+    "build_standardized_manifests",
+    "build_train_dataset",
+    "build_valid_dataset",
+    "iter_case_dirs",
+    "load_case_bundle",
+    "load_manifest_samples",
+]

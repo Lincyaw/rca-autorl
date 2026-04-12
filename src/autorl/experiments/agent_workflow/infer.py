@@ -122,6 +122,7 @@ def main(args: list[str]) -> None:
     submitted = 0
     try:
         controller.initialize(role="infer-rollout", server_args=server_args)
+        controller.start_proxy()
         for batch in dataloader:
             for item in batch:
                 controller.submit(

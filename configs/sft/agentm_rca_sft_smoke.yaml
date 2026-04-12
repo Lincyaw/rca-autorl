@@ -1,0 +1,97 @@
+experiment_name: autorl-agentm-rca-sft-smoke
+trial_name: local-smoke
+
+seed: 1
+total_train_epochs: 1
+total_train_steps: 1
+tokenizer_path: ${actor.path}
+
+scheduler:
+  type: local
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 1
+  fileroot: .runs/agentm-rca-sft-smoke
+  name_resolve:
+    type: nfs
+    nfs_record_root: .runs/agentm-rca-sft-smoke/name_resolve
+
+train_dataset:
+  type: sft
+  path: .runs/data/agentm_rca_smoke/sft.jsonl
+  batch_size: 1
+  shuffle: false
+  pin_memory: false
+  num_workers: 0
+  max_length: 4096
+
+valid_dataset:
+  type: sft
+  path: .runs/data/agentm_rca_smoke/sft.jsonl
+  batch_size: 1
+  shuffle: false
+  pin_memory: false
+  num_workers: 0
+  max_length: 4096
+
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
+
+actor:
+  backend: "fsdp:d1p1t1"
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen2.5-0.5B-Instruct
+  init_from_scratch: false
+  gradient_checkpointing: true
+  dtype: bfloat16
+  attn_impl: sdpa
+  mb_spec:
+    max_tokens_per_mb: 4096
+  optimizer:
+    type: adam
+    lr: 2e-5
+    weight_decay: 0.05
+    beta1: 0.9
+    beta2: 0.95
+    eps: 1e-5
+    lr_scheduler_type: cosine
+    gradient_clipping: 1.0
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 16
+      cmd: python3 -m areal.infra.rpc.rpc_server
+      env_vars: {}
