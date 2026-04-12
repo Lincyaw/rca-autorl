@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Local env and secrets
+.env
+.env.*
+
+# Runtime artifacts
+.runs/
+logs/
+outputs/
+*.log
+artifacts/agent_*/
+artifacts/areal_*/
+artifacts/checkpoints/*
+artifacts/predictions/*
+artifacts/traces/*
+artifacts/eval/*
+artifacts/exported_model/*
+artifacts/metadata/*.env
+artifacts/metadata/*.json
+!artifacts/**/.gitkeep
+
+# Local datasets and sample manifests
+data/processed/*
+!data/processed/.gitkeep
+data/manifests/**/*.jsonl
+data/manifests/*.jsonl
+
+# Submodule / external envs
+third_party/AReaL/.venv/
+third_party/AReaL/.cache/
+
+# SkyPilot and local orchestration files
+.sky/
+.omx/
