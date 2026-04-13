@@ -1,0 +1,27 @@
+{
+  "_comment": "Fill after run completes. All values must be numeric. Use notes.md for qualitative observations.",
+
+  "reward_mean": null,
+  "reward_std": null,
+  "reward_min": null,
+  "reward_max": null,
+
+  "eval_reward_mean": null,
+  "eval_reward_std": null,
+
+  "success_rate": null,
+  "eval_success_rate": null,
+
+  "training_loss_final": null,
+  "training_loss_best": null,
+
+  "avg_trajectory_turns": null,
+  "avg_trajectory_tokens": null,
+  "truncation_rate": null,
+
+  "throughput_tokens_per_sec": null,
+  "gpu_memory_peak_mb": null,
+  "training_time_hours": null,
+  "total_episodes": null,
+  "total_train_steps": null
+}

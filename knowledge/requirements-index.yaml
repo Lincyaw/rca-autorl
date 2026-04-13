@@ -1,0 +1,233 @@
+# Requirements Index — rca-autorl
+# Design specs for AReaL-first RL training scaffold (2026-04-12)
+# This is a new project — requirements reflect design intent, not recovery.
+
+requirements:
+  - id: REQ-001
+    title: Framework-agnostic contracts
+    description: >
+      Canonical data formats (TaskSample, AgentInput, Trajectory, TrajectoryStep,
+      TaskOutcome, RuntimeContext) that decouple task/runtime/reward logic from
+      any specific agent framework or training substrate.
+    priority: P0
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/contracts/, .doc/designs/design.md
+    code:
+      - path: src/autorl/contracts/task.py
+      - path: src/autorl/contracts/trajectory.py
+      - path: src/autorl/contracts/outcome.py
+      - path: src/autorl/contracts/runtime.py
+      - path: src/autorl/contracts/common.py
+      - path: src/autorl/contracts/training.py
+    tests: []
+    conflicts: []
+
+  - id: REQ-002
+    title: Unified AReaL-native agent workflow
+    description: >
+      Single workflow entrypoint (UnifiedAgentWorkflow.run) that orchestrates
+      sample validation → agent input → runtime execution → outcome extraction
+      → reward computation → observability, conforming to AReaL's
+      `async run(data, **extra_kwargs)` contract.
+    priority: P0
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/runtime/agent_workflow.py, .doc/designs/design.md
+    code:
+      - path: src/autorl/runtime/agent_workflow.py
+      - path: src/autorl/runtime/factory.py
+      - path: src/autorl/runtime/base.py
+    tests: []
+    conflicts: []
+
+  - id: REQ-003
+    title: RCA task adapter (RCABench)
+    description: >
+      TaskAdapter for root cause analysis that normalizes RCABench samples
+      (incident, data_dir, root_causes) into the contract layer and extracts
+      prediction vs. reference root-cause sets for evaluation.
+    priority: P0
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/tasks/rca.py, README.md
+    code:
+      - path: src/autorl/tasks/rca.py
+      - path: src/autorl/rca_utils.py
+    tests: []
+    conflicts: []
+
+  - id: REQ-004
+    title: AgentM runtime bridge
+    description: >
+      AgentRuntime implementation that delegates RCA episodes to AgentM's
+      headless investigation runner, serializes concurrent runs via asyncio
+      lock, and automatically exports AReaL proxy endpoints as AgentM env vars.
+    priority: P0
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/runtime/agentm.py, README.md
+    code:
+      - path: src/autorl/runtime/agentm.py
+    tests: []
+    conflicts: []
+    notes: >
+      Requires AGENTM_API_KEY or AReaL proxy injection at runtime.
+
+  - id: REQ-005
+    title: Root cause F1 reward
+    description: >
+      RewardStrategy that computes F1 score over root-cause key sets
+      (predicted vs. reference), serving as the primary RL signal.
+    priority: P0
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/rewards/rca.py
+    code:
+      - path: src/autorl/rewards/rca.py
+      - path: src/autorl/rewards/base.py
+      - path: src/autorl/rewards/registry.py
+    tests: []
+    conflicts: []
+
+  - id: REQ-006
+    title: RCABench dataset builder
+    description: >
+      CLI tool and library that converts RCABench case directories
+      (injection.json, env.json, conclusion.parquet) into standardized
+      rl.jsonl and sft.jsonl manifests with metadata.
+    priority: P1
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/data/rcabench.py, scripts/build_rcabench_dataset.py, README.md
+    code:
+      - path: src/autorl/data/rcabench.py
+      - path: scripts/build_rcabench_dataset.py
+    tests: []
+    conflicts:
+      - type: code-doc
+        description: >
+          README notes conclusion.parquet doesn't expose a ready-made causal
+          graph schema; code falls back to injection.json.ground_truth.
+        resolution: known-limitation
+
+  - id: REQ-007
+    title: SFT training path
+    description: >
+      Repo-owned SFT entrypoint that accepts JSON/JSONL manifests and
+      tokenizes them through AReaL SFTTrainer.
+    priority: P1
+    status: implemented
+    confidence: inferred
+    source: src/autorl/experiments/agent_sft/train.py, src/autorl/data/sft.py
+    code:
+      - path: src/autorl/experiments/agent_sft/train.py
+      - path: src/autorl/data/sft.py
+    tests: []
+    conflicts: []
+    notes: >
+      README describes agent_sft/train.py as placeholder in design.md;
+      actual implementation status may vary.
+
+  - id: REQ-008
+    title: Tool/env gateway abstraction
+    description: >
+      ToolGateway and EnvGateway interfaces with local, null, and HTTP
+      implementations. Supports local tool_env (search/visit/prompt tools)
+      and remote gateway modes.
+    priority: P1
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/gateways/, src/autorl/tool_env/
+    code:
+      - path: src/autorl/gateways/base.py
+      - path: src/autorl/gateways/tool_env.py
+      - path: src/autorl/gateways/null_env.py
+      - path: src/autorl/tool_env/app.py
+      - path: src/autorl/tool_env/client.py
+      - path: src/autorl/tool_env/tools/search.py
+      - path: src/autorl/tool_env/tools/visit.py
+      - path: src/autorl/tool_env/tools/prompt.py
+    tests: []
+    conflicts: []
+
+  - id: REQ-009
+    title: Rollout observability and metrics
+    description: >
+      Per-episode metric collection (reward, success, turns, tool usage,
+      token counts) published through AReaL stats_tracker. Run metadata
+      persisted under cluster.fileroot/autorl/metadata. Trace sink for
+      canonical trajectories.
+    priority: P2
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/observability/, src/autorl/runtime/trace_sink.py
+    code:
+      - path: src/autorl/observability/metrics.py
+      - path: src/autorl/observability/rollout.py
+      - path: src/autorl/runtime/trace_sink.py
+    tests: []
+    conflicts: []
+
+  - id: REQ-010
+    title: Search task (reference example)
+    description: >
+      Example task adapter, runtime, and reward for search-style QA,
+      serving as a reference implementation for the contract layer.
+    priority: P2
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/tasks/search*.py, .doc/designs/design.md
+    code:
+      - path: src/autorl/tasks/search.py
+      - path: src/autorl/tasks/search_runtime.py
+      - path: src/autorl/tasks/search_reward.py
+    tests: []
+    conflicts: []
+
+  - id: REQ-011
+    title: Train/eval/infer entrypoints
+    description: >
+      Thin CLI entrypoints that wire configs to UnifiedAgentWorkflow for
+      training, evaluation, and inference phases.
+    priority: P1
+    status: implemented
+    confidence: confirmed
+    source: src/autorl/experiments/agent_workflow/
+    code:
+      - path: src/autorl/experiments/agent_workflow/train.py
+      - path: src/autorl/experiments/agent_workflow/eval.py
+      - path: src/autorl/experiments/agent_workflow/infer.py
+      - path: src/autorl/experiments/agent_workflow/configs.py
+    tests: []
+    conflicts: []
+
+  - id: REQ-012
+    title: ReAct agent implementation
+    description: >
+      Built-in ReAct-style agent with tool_search, tool_visit, and prompt
+      tools for the tool_env gateway.
+    priority: P2
+    status: implemented
+    confidence: inferred
+    source: src/autorl/agents/
+    code:
+      - path: src/autorl/agents/react_agent.py
+      - path: src/autorl/agents/runner.py
+      - path: src/autorl/agents/tool_search.py
+      - path: src/autorl/agents/tool_visit.py
+      - path: src/autorl/agents/prompt.py
+      - path: src/autorl/agents/shared.py
+    tests: []
+    conflicts: []
+    notes: >
+      Not referenced in design.md or README; may be an earlier iteration
+      or supplementary component.
+
+# Status summary
+# - 12 design specs, all at implemented status
+# - 1 known limitation (REQ-006: conclusion.parquet schema)
+# - P0 (001-005): core training loop — done
+# - P1 (006-008, 011): infrastructure — done
+# - P2 (009-010, 012): supporting / reference — done
+# - Next frontier: test coverage, end-to-end eval baseline, scaffold usability

@@ -1,0 +1,70 @@
+# Experiment Run Record
+# Copy this directory to runs/<run-id>/ and fill in all fields.
+
+run_id: "run-YYYY-MM-DD-variant"
+plan: ""                          # which experiment plan
+study: ""                         # which ablation study (if applicable)
+date: "YYYY-MM-DDThh:mm:ss"
+duration: ""                      # wall clock time
+status: pending                   # pending | running | complete | failed | partial
+
+# --- Code traceability ---
+code:
+  commit: ""
+  branch: ""
+  tag: ""                         # tag if this run is a keeper
+
+# --- Training config ---
+config:
+  file: ""                        # path to YAML config, e.g. configs/train/xxx.yaml
+  overrides: {}                   # any CLI overrides on top of config file
+  # Key parameters (duplicated here for quick comparison):
+  model: ""                       # e.g. Qwen/Qwen2.5-7B-Instruct
+  task_adapter: ""                # e.g. autorl.tasks.rca.RCATaskAdapter
+  agent_runtime: ""               # e.g. autorl.runtime.agentm.AgentMRuntime
+  reward_strategy: ""             # e.g. autorl.rewards.rca.RootCauseMatchRewardStrategy
+
+# --- RL-specific parameters ---
+rl:
+  algorithm: ""                   # PPO / GRPO / SFT
+  learning_rate: null
+  kl_ctl: null
+  eps_clip: null
+  reward_scaling: null
+  reward_bias: null
+  n_samples: null                 # responses per prompt
+  max_new_tokens: null
+  temperature: null
+  batch_size: null
+  total_train_steps: null
+  total_train_epochs: null
+  max_head_offpolicyness: null    # staleness η
+  use_decoupled_loss: null
+  turn_discount: null
+  export_style: ""                # individual / concat
+
+# --- Data ---
+data:
+  train_path: ""
+  train_samples: null
+  eval_path: ""
+  eval_samples: null
+  dataset_version: ""             # sha256 or git revision
+
+# --- Environment ---
+environment:
+  hardware: ""                    # e.g. 8x A100 80GB
+  framework: ""                   # e.g. PyTorch 2.x, AReaL v0.2
+  python: ""
+  cuda: ""
+  seeds: []
+  backend_rollout: ""             # e.g. sglang:d4p1t1
+  backend_train: ""               # e.g. fsdp:d4p1t1
+
+# --- Reproduction ---
+reproduce: |
+  git checkout <commit>
+  git submodule update --init --recursive
+  uv sync
+  PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_workflow.train \
+    --config <config_file>
