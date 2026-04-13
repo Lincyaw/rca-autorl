@@ -38,17 +38,19 @@
 
 ### 2.2 World Model Agent（世界模型 / 因果推理器）
 
-**职责**：给定当前系统状态和一个 action（故障注入或中间传播事件），综合代码和可观测信息，预测下一个状态——即故障会如何传播。
+**职责**：给定当前系统状态 snapshot（State_t）和一个 action（故障注入动作），综合代码和可观测信息，预测注入后的状态变化（State_{t+1}）——哪些服务受影响、指标如何波动、日志/trace 变化、故障如何传播。
 
 **输入**：
-- 当前因果图状态（已知的 nodes, edges, anomalies）
-- 一个 action（故障注入动作 或 中间传播事件）
-- 可观测数据（metrics, traces, logs）
+- 注入前的系统状态 snapshot（完整的 metrics, traces, logs）
+- 一个 action（故障注入动作描述）
 - 代码仓库访问权限
+- 服务拓扑信息
 
-**输出**：
-- 预测的下一个因果图状态（新增 nodes, edges, 状态变化）
-- 预测的传播路径（action → intermediate effects → final effects）
+**输出**（多粒度预测）：
+- L1: 受影响的服务列表
+- L2: 具体指标变化方向（哪个 metric 升/降）
+- L3: 代码/span 级变化（可选）
+- 传播关系：A 的异常导致 B 的异常（因果边）
 - 置信度
 
 **工具调用**：
@@ -56,13 +58,15 @@
 - 可观测数据查询（验证预测与实际观测是否一致）
 - 拓扑查询（服务间依赖、网络拓扑等）
 
-**Reward**：预测因果图与实际因果图的结构相似度（待设计）
+**Reward**：基于注入前后 snapshot 自动对比——node_f1（服务级命中）+ metric_direction_accuracy（方向匹配）+ edge_f1（传播边命中），详见 §5.2
 
 **关键特性**：
+- 基于离线训练数据（历史注入 case 的前后 snapshot 对）训练
 - 不仅是代码静态分析——需要结合运行时可观测数据做动态推理
 - 需要建模混杂变量（confounders）和中间态
   - 例：代码注入 bug → 触发 CPU 异常升高 → CPU 升高导致延迟上升
   - CPU 异常升高是中间态 action，也是混杂变量
+- 验证通过 Verification Agent 对比预测与实际 snapshot 完成
 
 **当前状态**：未实现
 
@@ -78,15 +82,18 @@
 - 可用的故障注入手段（CPU 注入、网络延迟、代码 bug、资源耗尽等）
 - 业务影响模型（哪些服务更关键，影响面更大）
 
-**输出**：
-- 故障注入方案（注入什么、注入到哪个服务、注入参数）
-- 预期影响评估（影响范围、经济损失预估）
+**Action space**：离散选择题——候选项组织为预制的树形结构（故障大类 → 目标服务 → 具体参数），FI Agent 在树中导航选择，选择后附带文本解释（reasoning）。
 
-**Reward**：对抗性 reward——
-- (+) 注入的故障 RCA Agent 无法正确定位
-- (+) 注入的故障影响面大 / 经济损失高
-- (-) 注入的故障被 RCA Agent 成功定位
-- (-) 注入的故障对系统无实际影响（无效注入）
+**输出**：
+- 故障注入选择（从树形结构中选取的路径）
+- 文本解释（选择原因和预期影响）
+
+**Reward**：对抗性 reward（乘法结构）——
+- `rca_defeat × injection_validity × blast_bonus`
+- 无效注入 → reward = 0（不管 RCA 是否失败）
+- RCA 成功定位 → reward = 0（不管影响面多大）
+- 初期 RCA 对手用商业模型（水平稳定，提供有意义的对抗信号），后期替换为训练好的 RCA 模型
+- 详见 §5.3
 
 **对抗关系**：Fault Injection Agent 是 RCA Agent 的红队。两者形成对抗训练循环——
 - FI Agent 找 RCA 的盲区 → RCA 被迫扩展覆盖面 → FI Agent 被迫找新的盲区
@@ -95,36 +102,39 @@
 
 ---
 
-### 2.4 Verification Agent（验证 / 全链路裁判）
+### 2.4 Verification Agent（验证 / 全链路裁判 / 评估基础设施）
 
-**职责**：三重验证——
+**职责**：作为 pipeline 的评估基础设施，为其他 Agent 提供判定和 reward signal。三重验证——
 
 1. **注入可观测性验证**：注入后系统的实际可观测行为是否符合预期（如注入 CPU 异常后，metrics 上确实看到 CPU spike）
-2. **注入可区分性验证**：注入的故障是否产生了足够可区分的异常信号（能被 RCA Agent 观测到，即使无法被正确定位）
-3. **RCA 定位准确性验证**：对比故障注入的 ground truth（已知注入了什么）与 RCA Agent 的定位结果，判断 RCA 是否正确——本质上是一个 learned judge
+2. **RCA 定位准确性验证**：对比故障注入的 ground truth 与 RCA Agent 的定位结果——通过 LLM-as-judge 语义匹配，支持自由文本输出和格式容忍
+3. **World Model 预测验证**：对比 World Model 的预测与实际 snapshot 变化
 
 **输入**：
 - 故障注入方案 + 实际注入记录（来自 Fault Injection Agent，作为 ground truth）
-- 注入前后的可观测数据
-- 预期效果（来自 World Model Agent 的预测，或 Fault Injection Agent 的预期）
+- 注入前后的可观测数据 snapshot
+- World Model 的预测输出（如有）
 - RCA Agent 的定位输出（因果图 + 根因列表）
 
 **输出**：
 - 注入验证结果（有效 / 部分有效 / 无效）
 - RCA 定位验证结果（正确 / 部分正确 / 错误 + 具体差异分析）
-- 实际观测到的效果 vs 预期效果的差异分析
+- World Model 预测验证结果（各粒度的命中情况）
 - 综合质量评分
+
+**实现方式**：预置规则代码 + Agent 自主判定混合模式。规则覆盖常见故障类型的已知传播模式（确定性、零噪声），Agent 自主判定处理规则未覆盖的长尾。规则可通过正循环持续沉淀（Agent 自主判定 → 人工审核 → 沉淀为规则代码）。
+
+**训练策略**：Phase 1-2 **不训练**，完全由商业模型驱动。Phase 3-4 根据积累的数据和需求决定是否训练自己的 Verification 模型。详见 §5.4。
 
 **作为 reward provider 的角色**：
 
-训练成熟后，Verification Agent 可以替代硬编码的 reward function，为其他 agent 提供 learned reward signal：
-- 为 RCA Agent 提供 reward：RCA 的定位是否准确（替代 F1 硬匹配）
-- 为 FI Agent 提供 reward：注入是否有效 + RCA 是否失败（综合判定）
-- 优势：learned judge 能捕捉硬编码 F1 无法覆盖的"部分正确"、"方向正确但粒度不同"等细微情况
+Phase 1-2 由商业模型驱动，为其他 agent 提供 reward signal：
+- 为 RCA Agent 提供 reward：LLM-as-judge 语义匹配（Phase 2 起替代硬编码 F1）
+- 为 FI Agent 提供 reward：injection_validity 判定
+- 为 World Model 提供 reward：snapshot 观测比对
+- 远期（Phase 3-4）：训练好的 Verification 模型可提供 learned reward signal，捕捉硬编码指标无法覆盖的细粒度判定
 
-**Reward**：验证准确率（与 ground truth 对比——注入 ground truth 来自 FI Agent 的实际注入记录，RCA ground truth 来自 injection.json）
-
-**当前状态**：未实现
+**当前状态**：未实现（Phase 1 使用硬编码 F1 作为 RCA reward，不依赖 Verification）
 
 ---
 
@@ -249,10 +259,10 @@ Round N:
 
 | Agent | Reward | 设计要点 |
 |-------|--------|---------|
-| RCA | `RootCauseMatchRewardStrategy` | ✅ 已有，F1 on root causes |
-| World Model | `CausalPredictionRewardStrategy` | 预测图 vs 实际图的结构相似度 |
-| Fault Injection | `AdversarialInjectionRewardStrategy` | 对抗性：RCA失败×影响面 |
-| Verification | `VerificationAccuracyRewardStrategy` | 三重判定 vs ground truth（注入有效性 + RCA 准确性 + 综合评分） |
+| RCA | `RootCauseMatchRewardStrategy` | ✅ 已有，Phase 1 F1 硬匹配；Phase 2+ LLM-as-judge 语义匹配 |
+| World Model | `SnapshotPredictionRewardStrategy` | node_f1 × w1 + metric_direction_accuracy × w2 + edge_f1 × w3（基于 snapshot 自动对比） |
+| Fault Injection | `AdversarialInjectionRewardStrategy` | rca_defeat × injection_validity × blast_bonus（乘法结构，无效注入归零） |
+| Verification | — | Phase 1-2 不训练，由商业模型驱动；Phase 3-4 的 reward 待定 |
 
 ### 4.4 数据需求
 
@@ -564,7 +574,7 @@ reward = rca_defeat × injection_validity × (1 + 0.1 × (blast_radius - 1))
 **Phase 2 (all agents independent, mock dependencies)**:
 4. `propagation_edge_f1` > 0.5 (World Model)
 5. `injection_validity_rate` > 0.8 (FI Agent)
-6. `overall_accuracy` > 0.8 (Verification)
+6. `rca_judgment_accuracy` > 0.8 (Verification 商业模型 judge 质量监控——不是训练目标，而是基础设施可靠性要求)
 
 **Phase 3-4 (integrated pipeline)**:
 7. `adversarial_equilibrium` ∈ [0.35, 0.65]
@@ -582,22 +592,25 @@ reward = rca_defeat × injection_validity × (1 + 0.1 × (blast_radius - 1))
 - 依赖：agentm 子模块初始化、RCABench 数据准备
 
 ### Phase 2a: World Model Agent（可与 2b/2c 并行）
-- 目标：实现因果推理训练
-- 工作：WorldModelTaskAdapter、CausalPredictionRewardStrategy、因果图 diff 工具
-- Mock：FI = RCABench 注入场景或商业模型生成，Verification = 商业模型对比预测 vs 实际
-- 依赖：因果传播标注数据、代码阅读工具集成
+- 目标：实现 snapshot-based 因果传播预测训练
+- 工作：WorldModelTaskAdapter、SnapshotPredictionRewardStrategy、snapshot 前后对比工具
+- Reward：node_f1 + metric_direction_accuracy + edge_f1（全自动 snapshot 对比，无需 LLM judge）
+- Verification：商业模型驱动，预置规则代码 + 自主判定混合模式
+- 依赖：离线训练数据（历史注入 case 的前后 snapshot 对）、代码阅读工具集成
 
-### Phase 2b: Verification Agent（可与 2a/2c 并行）
-- 目标：实现全链路验证训练
-- 工作：VerificationTaskAdapter、VerificationAccuracyRewardStrategy
-- Mock：FI = RCABench ground truth，RCA = 商业模型做定位输出
-- 依赖：注入前后数据对比机制
+### Phase 2b: Verification Agent 基础设施（可与 2a/2c 并行）
+- 目标：搭建商业模型驱动的 Verification 基础设施（**不训练模型**）
+- 工作：预置规则代码库、LLM-as-judge prompt 设计、judge 质量监控 pipeline
+- 产出：为 RCA/WM/FI 提供评估服务的基础设施
+- 依赖：商业模型 API 接入、注入前后数据对比机制
 
 ### Phase 2c: Fault Injection Agent（可与 2a/2b 并行）
 - 目标：实现对抗性故障注入训练
-- 工作：FaultInjectionTaskAdapter、AdversarialInjectionRewardStrategy
-- Mock：RCA = 商业模型做对手，Verification = 商业模型做裁判
-- 依赖：业务影响模型、故障注入执行环境
+- 工作：FaultInjectionTaskAdapter、AdversarialInjectionRewardStrategy、树形 action space 构建
+- Reward：rca_defeat × injection_validity × blast_bonus（乘法结构）
+- RCA 对手：商业模型 Agent（水平稳定，提供有意义的对抗信号）
+- Verification：商业模型驱动（Phase 2b 产出）
+- 依赖：树形故障候选项制作、故障注入执行环境
 
 ### Phase 3: Mock 替换 + 重新评估
 - 目标：逐步用训练好的模型替换各位置的 mock
@@ -613,13 +626,20 @@ reward = rca_defeat × injection_validity × (1 + 0.1 × (blast_radius - 1))
 
 ## 7. 开放问题
 
-1. **World Model 的 ground truth 怎么获取？** RCABench 的 injection.json 提供了注入信息，但完整的因果传播链需要额外标注或自动推导。
-2. **对抗训练的稳定性**：FI 和 RCA 交替训练时，如何防止一方过强导致另一方完全崩溃？可能需要 population-based training 或 ELO-style matchmaking。
-3. **业务影响模型**：FI Agent 需要量化"经济损失"，这个模型从哪来？是人工定义的服务权重，还是从历史数据学习？
-4. **代码阅读的范围和粒度**：World Model 需要读目标微服务的代码，每个 RCABench case 对应的代码仓库如何组织和提供？
-5. **Verification 的 ground truth**：注入是否有效的绝对 ground truth 来自哪里？是基于 metrics 的自动判定，还是需要人工标注？
-6. **Verification-as-judge 的 bootstrap 问题**：Verification Agent 作为 learned judge 为其他 agent 提供 reward——但它自己的训练初期也不准确。需要先用硬编码 reward（F1）训练 RCA，同时用 ground truth 训练 Verification，当 Verification 足够准确后再切换为 learned reward。切换时机如何判定？
-7. **Verification 与硬编码 reward 的一致性校准**：Verification Agent 的 RCA 判定结果应与 F1 高度相关但不完全一致（它应该更细粒度）。需要监控两者的相关系数，如果偏差过大说明 Verification 可能在做 reward hacking。
+### 已解决
+
+1. ~~**World Model 的 ground truth 怎么获取？**~~ → 基于注入前后 snapshot 自动对比。Reward 用 node_f1 + direction_accuracy + edge_f1，全自动化，不需要因果图标注。详见 §5.2。
+2. ~~**业务影响模型**~~ → 用 blast_radius（受影响服务数量）替代经济损失估算，数据直接从 snapshot 异常检测获得。详见 §5.3。
+3. ~~**Verification 的 ground truth**~~ → 预置规则代码做确定性判定（规则覆盖的 case），Verification Agent 自主判定处理长尾。详见 §5.4。
+4. ~~**Verification-as-judge 的 bootstrap 问题**~~ → Phase 1-2 完全由商业模型驱动，不训练 Verification 模型。Phase 1 用硬编码 F1，Phase 2 用商业模型 LLM-as-judge。训练 Verification 是 Phase 3-4 的远期目标。详见 §5.4。
+
+### 仍然开放
+
+5. **对抗训练的稳定性**：FI 和 RCA 交替训练时，如何防止一方过强导致另一方完全崩溃？可能需要 population-based training 或 ELO-style matchmaking。Phase 1-2 通过商业模型做对手缓解此问题，但 Phase 4 对抗训练循环仍需解决。
+6. **代码阅读的范围和粒度**：World Model 需要读目标微服务的代码，每个 RCABench case 对应的代码仓库如何组织和提供？
+7. **Verification 与硬编码 reward 的一致性校准**：Phase 2 引入 LLM-as-judge 后，需要监控 judge 评分与 F1 硬匹配的相关系数。偏差过大说明 judge 漂移或被 exploit。已设计监控机制（§5.4），但具体阈值和响应策略待定。
+8. **树形 action space 的粒度和规模**：FI Agent 的故障候选项树的深度、广度、总节点数对训练效率和策略质量的影响待评估。
+9. **商业模型 mock 的质量保障**：不同商业模型做 mock 的行为差异可能导致训练出的 agent 在替换 mock 时退化。需要评估 mock→real degradation 的幅度和可接受范围。
 
 ---
 

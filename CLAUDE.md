@@ -17,7 +17,7 @@ See `AGENTS.md` for detailed coding style, testing, and commit guidelines — th
 ### Phase 2 — All agents independent (mock dependencies)
 5. **World Model** — propagation_edge_f1 > 0.5
 6. **Fault Injection** — injection_validity_rate > 0.8
-7. **Verification** — overall_accuracy > 0.8
+7. **Verification** — rca_judgment_accuracy > 0.8 (商业模型 judge 质量监控)
 
 ### Phase 3-4 — Integrated pipeline
 8. **Adversarial equilibrium** — FI success rate ∈ [0.35, 0.65]
