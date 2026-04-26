@@ -1,0 +1,46 @@
+{
+  "_comment": "Example .claude/settings.json fragment for the LLM-as-harness P0. Replace REPO_ROOT with the absolute path to your rca-autorl checkout. PYTHONPATH=src is needed because we run from source without `uv sync`.",
+  "env": {
+    "AUTORL_HARNESS_ROOT": "REPO_ROOT/.harness",
+    "AUTORL_HARNESS_PYTHON": "python3",
+    "PYTHONPATH": "REPO_ROOT/src"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPO_ROOT/scripts/harness/ingest_hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPO_ROOT/scripts/harness/ingest_hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPO_ROOT/scripts/harness/inject_hook.sh",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
