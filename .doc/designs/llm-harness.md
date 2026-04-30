@@ -160,7 +160,7 @@ suggestion: 回看 turn 0 的任务陈述，确认当前路径是否仍服务于
 
 - inference-time guardrail：本仓库 RCA agent 推理时直接受益。
 - train-time PRM：event 序列 + 漂移标注 → 训练 process reward model → 喂给 AReaL 做 dense reward。
-- 跨 agent 复用：agent-roles-spec 中其他 agent（World Model / Fault Injection / Verification）可共享同一套 harness 与 event schema。
+- 跨 agent 复用：本仓库其他 agent（FI / Verifier，以及正交研究线的 World Model）可共享同一套 harness 与 event schema。
 
 ---
 

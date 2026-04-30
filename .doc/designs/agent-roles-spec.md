@@ -3,11 +3,17 @@
 > 原始需求文档 — 2026-04-12
 > 状态：draft
 
+> **Status note (2026-04-30)**:
+> - 这是早期的详细实现 spec。当前**高层架构**以 `paper/ideas/triadic-self-play/v0-overview.md` 为准，**训练流程**以 `.doc/designs/training-pipeline.md` 为准。本 spec 在 TaskAdapter / Reward / 指标定义这些细节上仍是权威。
+> - **World Model Agent**（§2.2 / §5.2 / Phase 2a）从主线移到**正交研究线**，见 `paper/ideas/world-model/v0.md`。当前主线 4 个 agent 是 RCA / FI / Verifier / Controller；WM 不在主线但作为独立研究 topic 保留，本 spec 的 §2.2 / §5.2 / Phase 2a 是其实施底稿。
+> - **Verifier ≡ Verification Agent** —— 新文档统一用 "Verifier"（对齐 self_play_evolves 论文术语），本 spec 沿用 "Verification Agent"，二者等价。
+> - **Phase 编号**与 CLAUDE.md North-star 的 "Phase" 是同一轴；与 `training-pipeline.md` 的 "Stage" 是不同轴（前者是结果里程碑，后者是训练过程阶段）。
+
 ---
 
 ## 1. 系统目标
 
-训练一组专精 agent，形成微服务故障分析与注入的完整 pipeline。所有 agent 共享同一个 base model，通过不同的 agent 框架（TaskAdapter + AgentRuntime + RewardStrategy）赋予不同角色能力，独立训练，组合评估。
+训练一组专精 agent，形成微服务故障分析与注入的完整 pipeline。每个 agent 通过 TaskAdapter + AgentRuntime + RewardStrategy 的组合赋予角色能力，独立训练、组合评估。各 agent 的 base model 选型以及是否共享同一个 base 留给 stage kickoff 时根据实验决定。
 
 最终目标：通过 Fault Injection Agent 与 RCA Agent 的对抗训练，持续提升 RCA 能力的覆盖面，同时发现系统中高风险的故障盲区。
 

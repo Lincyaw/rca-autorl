@@ -24,7 +24,7 @@ parent: null
 
 ## Modeling approach
 
-**关键设计决定**：4 个 agent **权重独立**，但从同一个 base checkpoint 微调起步。论文里三元组共享权重的论据建立在任务同质前提（都是 code generation），我们这里 4 个 agent 输入输出 schema 异质（trace 推理 / 离散注入 / judge / wrapper），强行共享会互相干扰。论文真正想要的"strong-to-weak 同步"（Solver 进步反向回流到 Proposer/Verifier）我们用 **data-level 机制** 替代 weight-level 共享：
+**关键设计决定**：strong-to-weak 同步用 **data-level 机制** 显式实现，而不依赖 self_play_evolves 论文里"共享权重自动同步"的隐式假设。原因：4 个 agent 输入输出 schema 异质（trace 推理 / 离散注入 / judge / wrapper），weight-level 同步在异质任务下不一定有效（即便共享 init，分别 RL 后参数会快速分歧）。把同步机制显式做在数据层，无论后续选共享还是独立的权重方案，都有一条可监控、可干预的同步通道：
 
 - **Goalpost 漂移**：FI 的训练集动态维护为"当前 RCA 还搞不定的难 case"
 - **共享 replay buffer**：RCA 失败 trace 同时是 FI 正样本和 Verifier 难 judge 样本
@@ -41,7 +41,7 @@ parent: null
 
 ## Open questions（待 v1 ideas 收敛后回答）
 
-- Step / hop 的精确切分由谁负责（RCA 自报告 vs Verifier 后切分 vs 两者）
-- Process reward 相对 outcome reward 的权重起点
-- Goalpost 数据源（仅 RCABench vs 接入真实事故）
-- Controller 这条线的优先级（先放还是平行推进）
+- Step / hop 的精确切分由谁负责（RCA 自报告 vs Verifier 后切分 vs 两者）—— 当前倾向第三种作消融，见 `process-verifier/v1.md`
+- Process reward 相对 outcome reward 的权重起点 —— 起步 0.2，扫到 0.5，见 `process-verifier/v1.md`
+- Goalpost 数据源（RCABench 难 case + 真实生产事故），见 `goalpost-curriculum/v1.md`
+- 4 agent 是否共享同一个 base checkpoint —— 不预设，留给 stage kickoff 时根据实验决定

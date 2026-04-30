@@ -4,21 +4,24 @@
 
 ## 主研究线：Triadic Self-Play for RCA
 
-围绕 self_play_evolves 三元角色（Proposer/Solver/Verifier）框架，4 个 agent 权重独立、共享 init checkpoint，通过 data-level 机制做 strong-to-weak 同步。
+围绕 self_play_evolves 三元角色（Proposer/Solver/Verifier）框架，针对 RCA / FI / Verifier / Controller 4 个角色组织训练，用 data-level 机制做 strong-to-weak 同步。
 
 | Topic | 文件 | Status | 一句话 |
 |---|---|---|---|
-| Master | [`triadic-self-play/v0-overview.md`](triadic-self-play/v0-overview.md) | active | 项目母 idea：4 角色 + 信息不对称 + 权重独立的整体架构 |
+| Master | [`triadic-self-play/v0-overview.md`](triadic-self-play/v0-overview.md) | active | 项目母 idea：4 角色 + 信息不对称的整体架构 |
 | Process verifier | [`triadic-self-play/process-verifier/v1.md`](triadic-self-play/process-verifier/v1.md) | active | 把 RCA 推理拆成"假设跳"，每跳由 Verifier 给三子分（warrant / plan / conclusion） |
 | Goalpost curriculum | [`triadic-self-play/goalpost-curriculum/v1.md`](triadic-self-play/goalpost-curriculum/v1.md) | active | GASP 风格 lemma-lift 课程，用真实生产事故做 goalpost ground FI |
-| Asymmetry ladder | [`triadic-self-play/asymmetry-ladder/v1.md`](triadic-self-play/asymmetry-ladder/v1.md) | active | 权重独立设定下用 data-level 机制重建论文的 strong-to-weak 同步 |
+| Asymmetry ladder | [`triadic-self-play/asymmetry-ladder/v1.md`](triadic-self-play/asymmetry-ladder/v1.md) | active | 用 data-level 机制把论文里隐式的 strong-to-weak 同步显式化 |
 | Info-gain reward | [`triadic-self-play/info-gain-reward/v1.md`](triadic-self-play/info-gain-reward/v1.md) | active | 把 RCA 的 abduction 循环建模为 info-seeking MDP，每步信息增益进 reward |
 
-## 平行研究线：Controller Harness
+## 平行研究线
+
+正交于主线三元组的独立研究方向，主线训练通后再启动。
 
 | Topic | 文件 | Status | 一句话 |
 |---|---|---|---|
 | Controller harness | [`controller-harness/v0.md`](controller-harness/v0.md) | active (低优先级) | 给不可训练黑盒 LLM 训一个 wrapper，在 inference time 规范行为并提升性能 |
+| World Model | [`world-model/v0.md`](world-model/v0.md) | active (低优先级) | 三元组任务隐含的因果传播能力，研究是否要显式训一个 WM；先 probe 后 standalone |
 
 ## 约定
 
