@@ -30,13 +30,13 @@ parent: null
 - **共享 replay buffer**：RCA 失败 trace 同时是 FI 正样本和 Verifier 难 judge 样本
 - **周期性蒸馏**（可选）：把 RCA-N 的能力蒸馏为 prompt prior 喂给 FI 和 Verifier
 
-整体研究分解为 4 个核心子 hypothesis（见 idea-v1-* 文档）+ 1 条平行线（controller-harness）。
+整体研究分解为 4 个核心子 hypothesis（见同级子目录 `process-verifier/`、`goalpost-curriculum/`、`asymmetry-ladder/`、`info-gain-reward/`）+ 1 条平行线（`../controller-harness/`）。
 
 ## Related work
 
 - **self_play_evolves** (Liu et al., 2026)：理论根基，提供 epiplexity 度量和三元组框架
-- **GASP** (Jana et al., 2026)：lemma-lift goalpost-grounded 课程，影响 idea-v1-goalpost-curriculum
-- **SGS** (Bailey et al., 2026)：Guide model + REINFORCE^(1/2)，影响 idea-v1-process-verifier 和 RCA 训练目标选择
+- **GASP** (Jana et al., 2026)：lemma-lift goalpost-grounded 课程，影响 `goalpost-curriculum/`
+- **SGS** (Bailey et al., 2026)：Guide model + REINFORCE^(1/2)，影响 `process-verifier/` 和 RCA 训练目标选择
 - **现有 RCA 工作**（RCABench 等）：提供 baseline 和数据底座
 
 ## Open questions（待 v1 ideas 收敛后回答）

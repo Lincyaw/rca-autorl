@@ -24,7 +24,7 @@ third_party/         — AReaL、agentm 等子模块
 
 ## 当前研究状态
 
-- 主线 idea：见 `paper/ideas/idea-v0-rca-self-evolves.md` 及 4 个 v1 子 idea
+- 主线 idea：`paper/ideas/triadic-self-play/v0-overview.md` 及同目录下 4 个 v1 子 idea；索引 `paper/ideas/INDEX.md`
 - 系统设计：见 `.doc/designs/agent-roles-spec.md`（4 个 agent 的 task adapter / reward / 评估指标定义）
 - 训练阶段：Phase 1 RCA 基线（早期），后续阶段在 spec 中
 - 平行线：Controller harness（黑盒 wrapper，placeholder，待 Phase 2+ 启动）
