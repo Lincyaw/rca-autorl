@@ -1,0 +1,46 @@
+---
+id: idea-controller-harness-v0
+date: 2026-04-30
+status: active
+parent: null
+---
+
+# Controller: Trainable Harness for Black-Box LLM Agents
+
+## Motivation
+
+Self-play 三元组（FI / RCA / Verifier）的所有理论收益建立在"角色模型可微调"前提上。但真实部署里，最强的 RCA 候选模型往往是**不可训练的商业 LLM**（GPT-5、Claude 之类）—— 你拿不到权重，没法做 RL。这时候 self-play 的所有提升路径全部失效，只能"用 prompt 工程慢慢调"。
+
+我们想问一个不同的问题：**给定一个不可训练的黑盒 LLM 当 RCA agent，能不能训一个小模型作为 wrapper，规范它的行为同时提升它的下游性能？** 这条线和 self-play 三元组**完全平行**，是另一种把 RL 收益输送到生产场景的路径。也是和 .doc/designs/llm-harness.md 已有的 LLM-as-harness 监控草案的研究升级版 —— 把 monitor 升级为可训练的 policy。
+
+## Setting
+
+输入：黑盒 LLM RCA agent 当前的 transcript（已发生的 turn / tool call 历史）+ 系统状态（可观测数据访问）。
+输出：Controller 的 action —— 给黑盒喂什么 context / 选哪个工具 / 截断哪条 reasoning / 把 output 改写成什么格式 / 是否中止当前轨迹重启。
+评估对象：用 Controller 包装的黑盒 RCA vs 裸黑盒 RCA，在 (1) RCA F1、(2) 行为合规度（输出格式、推理 soundness）、(3) tool 调用成本三个维度的差异。
+
+Phase 2 起开始有意义；Phase 1 基础设施稳定后再启动这条线。
+
+## Modeling approach
+
+把 Controller 建模为一个 **inference-time RL agent**：
+- **State**：(current transcript, system state, original task spec)
+- **Action space**：离散选择题 —— context curation 选项 / 工具白名单切换 / reasoning 干预（如 "request a hypothesis" / "force evidence-gathering"）/ 输出格式约束
+- **Reward** = `λ_perf × downstream_F1 + λ_compl × behavior_compliance - λ_cost × tool_cost`
+- **Training**：与 self-play 三元组解耦 —— 拿训练好的 RCA / 训练中的 FI 都可以做 environment，Controller 自己用 RL 更新
+
+Controller **可以包任何黑盒角色**，不只是 RCA。比如 Phase 1-2 用商业 LLM mock 时，可以训一个 Controller 让 GPT-4o 当 FI 时更高效 —— 这给 mock-to-real 替换路径多了一条选项。
+
+## Related work
+
+- **现有 .doc/designs/llm-harness.md**：本 repo 已有的 LLM-as-harness 监控草案；本 idea 是它的可训练化升级
+- **agent scaffold / prompting policy** 文献：测试时控制 LLM 行为的工作（如 Tree-of-Thought 调度、ReAct prompt 工程）
+- **Inverse RL / RLHF on frozen base**：技术层面相关，但应用场景不同
+
+## Differentiator
+
+self-play / GASP / SGS 三篇 reference 论文都假设 Solver 可训练。"Solver 不可训练"这个约束在 production 里非常普遍，但学术界几乎没系统研究过。如果 Controller 这条线能把"包装黑盒"的提升做到接近"直接微调"的程度，会是一个独立的 paper-worthy 结果。
+
+## Status note
+
+**优先级：低于 4 个 v1 idea**。Phase 1-2 重心放在三元组主线，本 idea 作为 placeholder 保留。如果三元组主线在 Phase 2 末期跑通，再启动 Controller 这条线作为 Phase 3+ 的并行方向。
