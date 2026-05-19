@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Launch the RCA SFT smoke run.
+#
+# Defaults:
+#   - config: configs/sft/agentm_rca_sft_smoke.yaml
+#       (Qwen3-4B-Thinking-2507, max_length=32768)
+#   - train_dataset.path: ../AgentM/contrib/extensions/llmharness/runs/
+#     sft-10case-2026-05-18/extractor.jsonl (190 rows, <think> + tool_calls)
+#
+# Overrides:
+#   AGENTM_RCA_DATASET_ROOT — only needed if you switch to a config that
+#   feeds RL manifest rows that carry datapack_name instead of an
+#   absolute data_dir.
+#
+# Any extra args are forwarded to the train entrypoint, e.g.:
+#   ./scripts/run_sft_smoke.sh -p actor.path=Qwen/Qwen3-8B-Thinking-2507
+
+set -euo pipefail
+
+ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$ROOT_DIR"
+
+# AReaL worker subprocesses call ``python3`` — put the project venv first.
+export PATH="$ROOT_DIR/.venv/bin:$PATH"
+
+CONFIG="${SFT_CONFIG:-configs/sft/agentm_rca_sft_smoke.yaml}"
+
+if [[ ! -f "$CONFIG" ]]; then
+  echo "config not found: $CONFIG" >&2
+  exit 2
+fi
+
+if [[ ! -d "$ROOT_DIR/.venv" ]]; then
+  echo "venv missing — run: UV_HTTP_TIMEOUT=300 uv sync --python 3.12" >&2
+  exit 3
+fi
+
+python3 -m autorl.experiments.agent_sft.train --config "$CONFIG" "$@"

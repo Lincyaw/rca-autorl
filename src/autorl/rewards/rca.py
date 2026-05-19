@@ -1,31 +1,26 @@
+"""Reward strategy for RCA rollouts.
+
+Pulls precomputed ``service_hit`` / ``fault_kind_hit`` / ``score`` off
+``TaskOutcome.metrics`` (populated by :class:`RCATaskAdapter`) and
+returns the composite score as the scalar reward. The same dimensions
+are surfaced in the dict return so AReaL's ``stats_tracker`` can log
+them per-episode.
+
+The grading shape (``0.7 * service_hit + 0.3 * fault_kind_hit``)
+mirrors AgentM's own ``contrib/scenarios/rca/eval/baseline/grader.py``
+so SFT-time supervision (from llmharness/distill labels) and RL-time
+reward stay on one rubric.
+"""
+
 from __future__ import annotations
 
-from typing import Any
-
-from autorl.rca_utils import root_cause_key_set
 from autorl.contracts import RuntimeContext, TaskOutcome, TaskSample, Trajectory
 
 from .base import RewardStrategy
 
 
-def root_cause_f1_reward(
-    prediction: Any,
-    reference: Any,
-) -> float:
-    pred = root_cause_key_set(prediction)
-    ref = root_cause_key_set(reference)
-    if not pred or not ref:
-        return 0.0
-    true_positive = len(pred & ref)
-    if true_positive == 0:
-        return 0.0
-    precision = true_positive / len(pred)
-    recall = true_positive / len(ref)
-    return (2.0 * precision * recall) / (precision + recall)
-
-
-class RootCauseMatchRewardStrategy(RewardStrategy):
-    """Reward RCA predictions by root-cause set overlap."""
+class RCABaselineRewardStrategy(RewardStrategy):
+    """Service-hit + fault-kind-hit composite reward."""
 
     async def compute(
         self,
@@ -33,9 +28,16 @@ class RootCauseMatchRewardStrategy(RewardStrategy):
         trajectory: Trajectory,
         outcome: TaskOutcome,
         runtime_context: RuntimeContext,
-    ) -> float:
-        del trajectory, runtime_context
-        reference = outcome.reference
-        if reference is None:
-            reference = sample.reference
-        return root_cause_f1_reward(outcome.prediction, reference)
+    ) -> dict[str, float]:
+        metrics = outcome.metrics or {}
+        service_hit = float(metrics.get("service_hit", 0.0))
+        fault_kind_hit = float(metrics.get("fault_kind_hit", 0.0))
+        score = float(metrics.get("score", 0.7 * service_hit + 0.3 * fault_kind_hit))
+        has_submission = float(metrics.get("has_submission", 0.0))
+
+        return {
+            "reward": score,
+            "service_hit": service_hit,
+            "fault_kind_hit": fault_kind_hit,
+            "has_submission": has_submission,
+        }

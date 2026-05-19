@@ -21,7 +21,7 @@ where = ["src"]
 
 [tool.uv.sources]
 areal = { path = "third_party/AReaL", editable = true }
-agentm = { path = "third_party/agentm", editable = true }
+agentm = { path = "../AgentM", editable = true }
 torch = { index = "pytorch-cu129" }
 torchaudio = { index = "pytorch-cu129" }
 torchvision = { index = "pytorch-cu129" }

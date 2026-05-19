@@ -9,7 +9,7 @@ contract layer for task adapters, agent runtimes, trajectories, and tool/env gat
 
 - Implemented: `agent_workflow` train/eval/infer path through AReaL native agent workflow (`async run(data, **extra_kwargs)`)
 - Implemented: repo-owned RCABench manifest builder for AgentM RCA smoke / iteration
-- Implemented: SFT path for repo-owned JSON/JSONL manifests through AReaL `SFTTrainer`
+- Implemented: SFT path consuming `llmharness/distill` JSONL through AReaL `SFTTrainer`
 - Implemented: framework-agnostic contracts under `autorl.contracts`
 - Implemented: runtime/task/gateway abstractions under `autorl.runtime`, `autorl.tasks`, `autorl.gateways`
 - Example tasks: search-style QA and AgentM-backed RCA
@@ -19,9 +19,7 @@ contract layer for task adapters, agent runtimes, trajectories, and tool/env gat
 - `configs/train/`
   - baseline RL/rollout experiment configs (`smoke`, `base`, `agentm_rca_smoke`)
 - `configs/sft/`
-  - SFT smoke configs for standardized RCA manifests
-- `scripts/build_rcabench_dataset.py`
-  - convert RCABench case directories into repo-owned `rl.jsonl` / `sft.jsonl`
+  - SFT smoke configs that consume `llmharness/distill` output
 - `src/autorl/contracts/`
   - canonical data formats (`TaskSample`, `AgentInput`, `Trajectory`, `TaskOutcome`)
 - `src/autorl/runtime/`
@@ -45,8 +43,8 @@ contract layer for task adapters, agent runtimes, trajectories, and tool/env gat
 - Tool gateway: `autorl.gateways.ToolGateway`
 - AgentM RCA pieces:
   - `autorl.tasks.rca.RCATaskAdapter`
-  - `autorl.runtime.agentm.AgentMRuntime`
-  - `autorl.rewards.rca.RootCauseMatchRewardStrategy`
+  - `autorl.runtime.agentm.AgentMRuntime` (wraps `agentm_rca.eval.agent.AgentMAgent`)
+  - `autorl.rewards.rca.RCABaselineRewardStrategy`
 
 ## Setup
 
@@ -61,9 +59,10 @@ Core training/runtime dependencies follow `third_party/AReaL/pyproject.toml`. Ke
 root project lean: do not re-pin `torch`, `sglang`, `flash-attn`, `openai`, or similar
 packages here unless the repo adds a dependency that AReaL does not already own.
 
-The root `pyproject.toml` depends on `areal[sglang]` and `agentm` as editable local
-packages, and the repo-level `tool.uv` settings mirror the minimum AReaL overrides
-needed to resolve the vendored SGLang stack from this workspace.
+The root `pyproject.toml` depends on `areal[sglang]` as an editable submodule and on
+`agentm` as an editable reference to the sibling `../AgentM` working tree (no
+vendored copy). Make sure `../AgentM` exists and is on the branch you want to use
+before running `uv sync`.
 
 ## Baseline runs
 
@@ -83,8 +82,10 @@ one environment.
 
 ## AgentM integration
 
-`third_party/agentm` is wired in as an editable `uv` workspace dependency. The repo now
-targets Python 3.12 so `agentm` and `autorl` share one environment.
+`agentm` is referenced as an editable install pointing at the sibling `../AgentM`
+working tree (the legacy `third_party/agentm` submodule was removed during the
+migration to the new harness-sync scenario).  The repo targets Python 3.12 so
+`agentm` and `autorl` share one environment.
 
 - RCA adapter: `autorl.tasks.rca.RCATaskAdapter`
 - AgentM runtime: `autorl.runtime.agentm.AgentMRuntime`
@@ -118,52 +119,77 @@ When AReaL injects an OpenAI-compatible proxy endpoint into the workflow runtime
 
 This keeps AgentM rollout calls on the AReaL proxy path instead of bypassing training.
 
-## RCABench dataset builder
+## SFT data — llmharness/distill output
 
-Build standardized manifests from a single case or a directory of cases:
+SFT data is produced by AgentM's ``llmharness`` extension, not by a
+repo-owned builder. After running an ``agentm`` rca:harness.sync eval
+pass, ``llmharness-distill export`` emits one JSONL row per
+extractor (and auditor) child session with Qwen / GLM ``<think>`` +
+tool_calls shape::
 
-```bash
-PYTHONPATH=src .venv/bin/python scripts/build_rcabench_dataset.py \
-  /mnt/nvme0/rcabench_data/rcabench/ts9-ts-route-plan-service-request-replace-path-9dg8qf \
-  --output-dir .runs/data/agentm_rca_smoke
-```
+    {
+      "phase": "extractor",
+      "input":  {"system": "...", "user": "..."},
+      "target": {"messages": [{"role": "assistant",
+                               "content": "<think>...</think>",
+                               "tool_calls": [...]}]},
+      ...
+    }
 
-The builder writes:
+Point ``configs/sft/agentm_rca_sft_smoke.yaml``'s
+``train_dataset.path`` at the resulting ``extractor.jsonl`` and the
+trainer will tokenize through the Qwen3-Thinking chat template,
+masking the prompt and supervising the assistant ``<think>`` + tool
+call. See ``../AgentM/contrib/extensions/llmharness/runs/`` for a
+sample bundle.
 
-- `rl.jsonl` — for AgentM RCA rollout / RL (`incident`, `data_dir`, `root_causes`, `messages`)
-- `sft.jsonl` — for repo-owned SFT (`messages`, `assistant_response`)
-- `metadata.json` — conversion summary
+## End-to-end run order
 
-The RL manifest also carries eval-friendly `question` / `answer` fields so it can be
-reused by RCABench-style tooling.
+1. **Bootstrap once** (submodule + venv):
 
-## Smoke flow
+   ```bash
+   git submodule update --init --depth 1 third_party/AReaL
+   UV_HTTP_TIMEOUT=300 uv sync --python 3.12
+   ```
 
-Dataset conversion:
+2. **SFT** — consumes the llmharness/distill bundle (no other data prep needed):
 
-```bash
-PYTHONPATH=src .venv/bin/python scripts/build_rcabench_dataset.py \
-  /mnt/nvme0/rcabench_data/rcabench/ts9-ts-route-plan-service-request-replace-path-9dg8qf \
-  --output-dir .runs/data/agentm_rca_smoke
-```
+   ```bash
+   ./scripts/run_sft_smoke.sh
+   ```
 
-SFT smoke:
+   Equivalent to:
 
-```bash
-PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_sft.train \
-  --config configs/sft/agentm_rca_sft_smoke.yaml
-```
+   ```bash
+   PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_sft.train \
+     --config configs/sft/agentm_rca_sft_smoke.yaml
+   ```
 
-RL / rollout smoke:
+   No GPU available? Run `scripts/sft_cpu_smoke.py` first — it loads
+   the same distill bundle on Qwen3-0.6B (CPU, ~7 min) and prints
+   per-step loss so you can confirm the chat template / loss_mask
+   wiring is healthy before booking GPUs. See its docstring for env
+   overrides.
 
-```bash
-PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_workflow.train \
-  --config configs/train/agentm_rca_smoke.yaml
-```
+3. **RL** — consumes AgentM's processed RCA dataset directly. Set the
+   dataset root once so `RCATaskAdapter` can resolve each
+   `datapack_name` to an absolute case directory:
 
-The live AgentM rollout path still requires model credentials or a reachable OpenAI-style
-proxy. If you are not running under AReaL proxy injection, set `AGENTM_API_KEY` and
-optionally `AGENTM_API_BASE_URL` before invoking the AgentM runtime.
+   ```bash
+   export AGENTM_RCA_DATASET_ROOT=/home/ddq/AoyangSpace/dataset/rca
+
+   PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_workflow.train \
+     --config configs/train/agentm_rca_smoke.yaml
+   ```
+
+   If you have a different processed dataset, point `train_dataset.path`
+   at its `data.jsonl` (with override `-p train_dataset.path=...`).
+
+   The live AgentM rollout still needs LLM credentials: either let
+   AReaL inject its proxy, or set `OPENAI_API_KEY` / `OPENAI_BASE_URL`
+   (matched by `AGENTM_PROVIDER=openai`) before launch. Anthropic-style
+   providers are equally supported — see `agentm_rca.eval.agent` for
+   the env-var convention.
 
 ## Safe eval/infer behavior
 

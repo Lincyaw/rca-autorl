@@ -12,7 +12,7 @@ eval_workflow: ${workflow}
 infer_workflow: ${workflow}
 task_adapter_path: autorl.tasks.rca.RCATaskAdapter
 agent_runtime_path: autorl.runtime.agentm.AgentMRuntime
-reward_strategy_path: autorl.rewards.rca.RootCauseMatchRewardStrategy
+reward_strategy_path: autorl.rewards.rca.RCABaselineRewardStrategy
 tool_gateway_mode: local
 tool_gateway_base_url: null
 env_gateway_mode: none
@@ -59,7 +59,7 @@ actor:
   backend: "fsdp:d1p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-0.5B-Instruct
+  path: Qwen/Qwen3-4B-Thinking-2507
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -120,22 +120,28 @@ sglang:
   skip_tokenizer_init: false
   dtype: ${actor.dtype}
   max_running_requests: null
-  context_length: 8192
+  context_length: 32768
   mem_fraction_static: 0.7
 
+# RL data — directly consumes AgentM's processed RCA dataset. Each
+# row carries {id/source, question, ground_truth, fault_type,
+# datapack_name} and the RCATaskAdapter resolves data_dir by joining
+# AGENTM_RCA_DATASET_ROOT (env var) with datapack_name. Default points
+# at the canonical workspace dataset; override with `-p
+# train_dataset.path=...` when pointing at a different jsonl.
 train_dataset:
   batch_size: 1
   shuffle: false
   pin_memory: false
   type: rl
-  path: .runs/data/agentm_rca_smoke/rl.jsonl
+  path: /home/ddq/AoyangSpace/dataset/rca/data.jsonl
 
 valid_dataset:
   batch_size: 1
   shuffle: false
   pin_memory: false
   type: rl
-  path: .runs/data/agentm_rca_smoke/rl.jsonl
+  path: /home/ddq/AoyangSpace/dataset/rca/data.jsonl
 
 saver:
   experiment_name: ${experiment_name}

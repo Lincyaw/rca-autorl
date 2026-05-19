@@ -12,7 +12,7 @@ eval_workflow: ${workflow}
 infer_workflow: ${workflow}
 task_adapter_path: autorl.tasks.rca.RCATaskAdapter
 agent_runtime_path: autorl.runtime.agentm.AgentMRuntime
-reward_strategy_path: autorl.rewards.rca.RootCauseMatchRewardStrategy
+reward_strategy_path: autorl.rewards.rca.RCABaselineRewardStrategy
 tool_gateway_mode: local
 tool_gateway_base_url: null
 env_gateway_mode: none
@@ -61,7 +61,7 @@ actor:
   backend: "fsdp:d4p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-7B-Instruct
+  path: Qwen/Qwen3-4B-Thinking-2507
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -136,14 +136,18 @@ train_dataset:
   shuffle: true
   pin_memory: true
   type: rl
-  path: .runs/data/rcabench_full/rl_train.jsonl
+  # AgentM-processed RCA dataset; rows carry datapack_name +
+  # ground_truth and the RCATaskAdapter resolves data_dir via
+  # AGENTM_RCA_DATASET_ROOT. Same file for train + valid until a
+  # held-out split is materialized.
+  path: /home/ddq/AoyangSpace/dataset/rca/data.jsonl
 
 valid_dataset:
   batch_size: 64
   shuffle: false
   pin_memory: true
   type: rl
-  path: .runs/data/rcabench_full/rl_eval.jsonl
+  path: /home/ddq/AoyangSpace/dataset/rca/data.jsonl
 
 saver:
   experiment_name: ${experiment_name}

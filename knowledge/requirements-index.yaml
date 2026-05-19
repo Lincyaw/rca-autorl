@@ -53,16 +53,23 @@ requirements:
     source: src/autorl/tasks/rca.py, README.md
     code:
       - path: src/autorl/tasks/rca.py
-      - path: src/autorl/rca_utils.py
-    tests: []
+    tests:
+      - path: tests/test_rca_pipeline.py
     conflicts: []
+    notes: >
+      Accepts AgentM seed_dataset rows
+      (source/question/ground_truth/fault_type/datapack_name); data_dir
+      resolved via AGENTM_RCA_DATASET_ROOT + datapack_name. Also
+      accepts explicit RL manifests with
+      incident/data_dir/expected_services/fault_kind.
 
   - id: REQ-004
     title: AgentM runtime bridge
     description: >
-      AgentRuntime implementation that delegates RCA episodes to AgentM's
-      headless investigation runner, serializes concurrent runs via asyncio
-      lock, and automatically exports AReaL proxy endpoints as AgentM env vars.
+      AgentRuntime implementation that delegates RCA episodes to the
+      AgentM rca:harness.sync scenario via
+      agentm_rca.eval.agent.AgentMAgent. Forwards AReaL's proxy
+      endpoints to AgentM through OPENAI_BASE_URL / AGENTM_MODEL env vars.
     priority: P0
     status: implemented
     confidence: confirmed
@@ -72,13 +79,14 @@ requirements:
     tests: []
     conflicts: []
     notes: >
-      Requires AGENTM_API_KEY or AReaL proxy injection at runtime.
+      Depends on the sibling ../AgentM working tree (editable install).
 
   - id: REQ-005
-    title: Root cause F1 reward
+    title: RCA baseline reward
     description: >
-      RewardStrategy that computes F1 score over root-cause key sets
-      (predicted vs. reference), serving as the primary RL signal.
+      RewardStrategy computing the AgentM eval/baseline grader rubric
+      (0.7 * service_hit + 0.3 * fault_kind_hit) so SFT supervision
+      (from llmharness/distill labels) and RL reward share one rubric.
     priority: P0
     status: implemented
     confidence: confirmed
@@ -87,47 +95,48 @@ requirements:
       - path: src/autorl/rewards/rca.py
       - path: src/autorl/rewards/base.py
       - path: src/autorl/rewards/registry.py
-    tests: []
+    tests:
+      - path: tests/test_rca_pipeline.py
     conflicts: []
 
   - id: REQ-006
-    title: RCABench dataset builder
+    title: Direct AgentM dataset reuse (no repo-owned builder)
     description: >
-      CLI tool and library that converts RCABench case directories
-      (injection.json, env.json, conclusion.parquet) into standardized
-      rl.jsonl and sft.jsonl manifests with metadata.
+      Instead of a repo-owned RCABench manifest builder, autorl
+      consumes the processed RCA dataset that AgentM already produces
+      under $AGENTM_RCA_DATASET_ROOT/data.jsonl (seeded via
+      agentm_rca.eval.seed_dataset). SFT data comes from
+      llmharness/distill output bundles.
     priority: P1
     status: implemented
     confidence: confirmed
-    source: src/autorl/data/rcabench.py, scripts/build_rcabench_dataset.py, README.md
-    code:
-      - path: src/autorl/data/rcabench.py
-      - path: scripts/build_rcabench_dataset.py
+    source: README.md, configs/sft/agentm_rca_sft_smoke.yaml, configs/train/agentm_rca_smoke.yaml
+    code: []
     tests: []
-    conflicts:
-      - type: code-doc
-        description: >
-          README notes conclusion.parquet doesn't expose a ready-made causal
-          graph schema; code falls back to injection.json.ground_truth.
-        resolution: known-limitation
+    conflicts: []
+    notes: >
+      Legacy src/autorl/data/rcabench.py and
+      scripts/build_rcabench_dataset.py were removed in the 2026-05-19
+      migration. autorl.tasks.rca.RCATaskAdapter reads the dataset
+      directly.
 
   - id: REQ-007
-    title: SFT training path
+    title: SFT training path on llmharness/distill JSONL
     description: >
-      Repo-owned SFT entrypoint that accepts JSON/JSONL manifests and
-      tokenizes them through AReaL SFTTrainer.
+      AReaL SFTTrainer entrypoint that tokenizes llmharness/distill
+      output (input.{system,user} + target.messages[<think> +
+      tool_calls]) through the Qwen3-Thinking chat template, masking
+      the prompt and supervising only the assistant turn.
     priority: P1
     status: implemented
-    confidence: inferred
+    confidence: confirmed
     source: src/autorl/experiments/agent_sft/train.py, src/autorl/data/sft.py
     code:
       - path: src/autorl/experiments/agent_sft/train.py
       - path: src/autorl/data/sft.py
-    tests: []
+    tests:
+      - path: tests/test_rca_pipeline.py
     conflicts: []
-    notes: >
-      README describes agent_sft/train.py as placeholder in design.md;
-      actual implementation status may vary.
 
   - id: REQ-008
     title: Tool/env gateway abstraction
