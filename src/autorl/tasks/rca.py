@@ -1,28 +1,34 @@
-"""TaskAdapter for RCA cases that target the new AgentM ``rca:harness.sync``
+"""TaskAdapter for RCA cases that target the AgentM ``rca:harness.sync``
 scenario.
 
-Sample shape (one JSONL row per case)::
+The adapter accepts the canonical sample shape produced by AgentM's
+``agentm_rca.eval.seed_dataset`` pipeline — i.e. the rows in
+``$AGENTM_RCA_DATASET_ROOT/data.jsonl``::
 
-    {
-      "id":                "ts9-...",
-      "incident":          "<natural-language incident description>",
-      "data_dir":          "/mnt/.../rcabench/<case>",
-      "expected_services": ["ts-order-service", ...],
-      "fault_kind":        "cpu_stress",
-      "root_causes":       [...]            # optional richer GT
-    }
+    {"id":            5,
+     "source":        "ts0-mysql-corrupt-kwx8n5",
+     "question":      "<natural-language SLO/incident description>",
+     "answer":        "mysql,ts-station-service",
+     "ground_truth":  ["mysql", "ts-station-service"],
+     "fault_type":    "NetworkCorrupt",
+     "datapack_name": "ts0-mysql-corrupt-kwx8n5",
+     ...}
 
-The adapter is intentionally minimal: it carries ``incident`` /
-``data_dir`` into :class:`AgentInput.context` (the AgentMRuntime reads
-them from there) and stashes the ground-truth labels on the
-``reference`` field for the reward strategy to consume. The prediction
-shape comes back from :class:`AgentMRuntime` as an
-``AgentRCAOutput``-shaped dict in ``trajectory.final_output['prediction']``.
+``data_dir`` is recovered as ``$AGENTM_RCA_DATASET_ROOT / datapack_name``
+so SFT and RL trajectories land on the same on-disk case directory
+that ``AgentMAgent`` consumes via ``AGENTM_RCA_DATA_DIR``.
+
+The pre-AgentM shape (``incident`` / ``data_dir`` / ``expected_services``
+/ ``fault_kind``) is still accepted as a fallback for one-off RL
+manifests that don't go through ``seed_dataset``.
 """
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -30,27 +36,39 @@ from autorl.contracts import AgentInput, TaskOutcome, TaskSample, Trajectory
 
 from .base import TaskAdapter
 
-_ID_KEYS = ("sample_id", "case_id", "qid", "query_id", "id")
+_ID_KEYS = ("sample_id", "case_id", "qid", "query_id", "source", "id")
 _INCIDENT_KEYS = ("incident", "question", "prompt", "task_description", "task")
 _DATA_DIR_KEYS = ("data_dir", "case_dir", "observability_dir")
-_RESERVED = set(
-    _ID_KEYS
-    + _INCIDENT_KEYS
-    + _DATA_DIR_KEYS
-    + ("expected_services", "fault_kind", "root_causes", "ground_truth", "messages")
+_DATAPACK_KEYS = ("datapack_name", "data_pack_name", "case_name")
+_RESERVED = (
+    set(_ID_KEYS)
+    | set(_INCIDENT_KEYS)
+    | set(_DATA_DIR_KEYS)
+    | set(_DATAPACK_KEYS)
+    | {
+        "expected_services",
+        "fault_kind",
+        "fault_type",
+        "root_causes",
+        "ground_truth",
+        "answer",
+        "messages",
+        "tags",
+    }
 )
+
+_DATASET_ROOT_ENV = "AGENTM_RCA_DATASET_ROOT"
 
 
 class RCATaskAdapter(TaskAdapter):
-    """Normalize rcabench-shaped samples for AgentM-backed RCA rollouts."""
+    """Bind AgentM-shaped RCA rows to the autorl runtime contracts."""
 
     task_type = "rca"
 
     def validate_sample(self, raw_sample: Mapping[str, Any]) -> TaskSample:
-        incident = _required_text(raw_sample, _INCIDENT_KEYS, "incident")
-        data_dir = _required_text(raw_sample, _DATA_DIR_KEYS, "data_dir")
+        incident = _required_text(raw_sample, _INCIDENT_KEYS, "incident or question")
+        data_dir = _resolve_data_dir(raw_sample)
         sample_id = _pick_id(raw_sample)
-
         reference = _extract_reference(raw_sample)
         metadata = {k: v for k, v in raw_sample.items() if k not in _RESERVED}
 
@@ -125,21 +143,64 @@ def _required_text(raw: Mapping[str, Any], keys: tuple[str, ...], label: str) ->
     raise ValueError(f"rca sample missing required key: {label}")
 
 
+def _resolve_data_dir(raw: Mapping[str, Any]) -> str:
+    """Find ``data_dir`` directly or rebuild it from ``datapack_name`` + env root."""
+    for key in _DATA_DIR_KEYS:
+        value = raw.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    for key in _DATAPACK_KEYS:
+        value = raw.get(key)
+        if value is None or not str(value).strip():
+            continue
+        root = os.environ.get(_DATASET_ROOT_ENV, "").strip()
+        if not root:
+            raise ValueError(
+                f"rca sample carries {key!r} but {_DATASET_ROOT_ENV} is not set — "
+                f"point it at the directory that holds the case folders "
+                f"(e.g. /home/ddq/AoyangSpace/dataset/rca)"
+            )
+        return str(Path(root).expanduser() / str(value).strip())
+    raise ValueError(
+        "rca sample missing required key: data_dir or datapack_name (+ "
+        f"{_DATASET_ROOT_ENV})"
+    )
+
+
 def _extract_reference(raw: Mapping[str, Any]) -> dict[str, Any]:
-    """Collect ground-truth fields the reward strategy needs."""
+    """Collect ground-truth fields the reward strategy needs.
+
+    Accepts both shapes:
+      * AgentM seed_dataset row: ``ground_truth=[...services...]``,
+        ``fault_type="NetworkCorrupt"``;
+      * pre-AgentM hand-written manifest: ``expected_services=[...]``,
+        ``fault_kind="cpu_stress"``.
+    """
     reference: dict[str, Any] = {}
-    services = raw.get("expected_services")
-    if isinstance(services, list):
-        reference["expected_services"] = [str(s) for s in services if s]
-    fault_kind = raw.get("fault_kind")
-    if fault_kind is not None and str(fault_kind).strip():
-        reference["fault_kind"] = str(fault_kind).strip()
-    root_causes = raw.get("root_causes")
-    if isinstance(root_causes, list):
-        reference["root_causes"] = list(root_causes)
-    ground_truth = raw.get("ground_truth")
-    if isinstance(ground_truth, dict):
-        reference["ground_truth"] = dict(ground_truth)
+
+    services: list[str] = []
+    explicit = raw.get("expected_services")
+    if isinstance(explicit, list):
+        services = [str(s) for s in explicit if isinstance(s, str) and s]
+    elif isinstance(raw.get("ground_truth"), list):
+        services = [
+            str(s) for s in raw["ground_truth"] if isinstance(s, str) and s
+        ]
+    if services:
+        reference["expected_services"] = services
+
+    fault = raw.get("fault_kind")
+    if fault is None or not str(fault).strip():
+        fault = raw.get("fault_type")
+    if fault is not None and str(fault).strip():
+        reference["fault_kind"] = str(fault).strip()
+
+    if isinstance(raw.get("root_causes"), list):
+        reference["root_causes"] = list(raw["root_causes"])
+    if isinstance(raw.get("ground_truth"), dict):
+        reference["ground_truth"] = dict(raw["ground_truth"])
+    elif isinstance(raw.get("ground_truth"), list):
+        reference.setdefault("ground_truth", list(raw["ground_truth"]))
     return reference
 
 
@@ -150,13 +211,17 @@ def _grade_against_reference(
     """Service-hit + fault-kind-hit shape, matching agentm's baseline grader.
 
     ``prediction`` is the AgentRCAOutput-shaped dict returned by
-    :class:`AgentMRuntime`:
+    :class:`AgentMRuntime`::
 
         {"root_causes": [{"service": "...", "fault_kind": "..."}, ...],
          "propagation": [...]}
 
-    Reference may carry ``expected_services`` (list of service names)
-    and ``fault_kind`` (substring matched case-insensitively).
+    Reference carries ``expected_services`` (list of service names) and
+    ``fault_kind`` (substring matched case-insensitively). The
+    ``_normalize_kind`` helper folds the rcabench snake_case shape
+    (``cpu_stress``, ``NetworkDelay``) into the same space-separated
+    lowercase form LLM verdicts use ("CPU stress", "network delay")
+    so substring matching survives the train/serve mismatch.
     """
     services_hit = 0.0
     fault_kind_hit = 0.0
@@ -166,10 +231,6 @@ def _grade_against_reference(
         for s in reference.get("expected_services") or []
         if isinstance(s, str)
     ]
-    # rcabench injection.json uses snake_case fault_kind (``cpu_stress``,
-    # ``pod_kill``); LLM verdicts tend toward natural language ("CPU
-    # stress"). Normalize both ends by lowercasing and collapsing ``_``
-    # / multi-space to a single space before substring matching.
     expected_fault = _normalize_kind(reference.get("fault_kind") or "")
 
     if not expected_services and not expected_fault:
@@ -202,5 +263,17 @@ def _grade_against_reference(
 
 
 def _normalize_kind(value: Any) -> str:
-    text = str(value or "").strip().lower().replace("_", " ")
-    return " ".join(text.split())
+    """Fold ``cpu_stress``, ``NetworkDelay``, ``CPU stress`` to one form.
+
+    rcabench's ``injection.json`` uses snake_case OR CamelCase fault
+    labels; LLM verdicts tend toward natural English. Insert spaces at
+    camelCase boundaries, replace underscores with spaces, lowercase,
+    collapse whitespace. All call sites can then do substring match
+    safely.
+    """
+    raw = str(value or "")
+    spaced = _CAMEL_RE.sub(" ", raw)
+    return " ".join(spaced.lower().replace("_", " ").split())
+
+
+_CAMEL_RE = re.compile(r"(?<=[a-z])(?=[A-Z])")

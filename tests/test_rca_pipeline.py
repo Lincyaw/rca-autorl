@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import os
 import sys
 import types
 import unittest
@@ -91,7 +92,7 @@ class _StubTokenizer:
 
 
 class RCATaskAdapterTests(unittest.TestCase):
-    def test_validate_sample_extracts_reference(self) -> None:
+    def test_validate_sample_accepts_explicit_shape(self) -> None:
         adapter = RCATaskAdapter()
         sample = adapter.validate_sample(
             {
@@ -104,12 +105,51 @@ class RCATaskAdapterTests(unittest.TestCase):
         )
         self.assertEqual(sample.sample_id, "ts9-case")
         self.assertEqual(
-            sample.reference,
-            {
-                "expected_services": ["ts-order-service", "ts-cart-service"],
-                "fault_kind": "cpu_stress",
-            },
+            sample.reference["expected_services"],
+            ["ts-order-service", "ts-cart-service"],
         )
+        self.assertEqual(sample.reference["fault_kind"], "cpu_stress")
+
+    def test_validate_sample_accepts_agentm_dataset_shape(self) -> None:
+        adapter = RCATaskAdapter()
+        os.environ["AGENTM_RCA_DATASET_ROOT"] = "/home/ddq/AoyangSpace/dataset/rca"
+        try:
+            sample = adapter.validate_sample(
+                {
+                    "id": 5,
+                    "source": "ts0-mysql-corrupt-kwx8n5",
+                    "question": "API endpoints have SLO violations; investigate.",
+                    "answer": "mysql,ts-station-service",
+                    "ground_truth": ["mysql", "ts-station-service"],
+                    "fault_type": "NetworkCorrupt",
+                    "datapack_name": "ts0-mysql-corrupt-kwx8n5",
+                    "tags": ["fse"],
+                }
+            )
+        finally:
+            os.environ.pop("AGENTM_RCA_DATASET_ROOT", None)
+        self.assertEqual(sample.sample_id, "ts0-mysql-corrupt-kwx8n5")
+        self.assertEqual(
+            sample.input["data_dir"],
+            "/home/ddq/AoyangSpace/dataset/rca/ts0-mysql-corrupt-kwx8n5",
+        )
+        self.assertEqual(
+            sample.reference["expected_services"],
+            ["mysql", "ts-station-service"],
+        )
+        self.assertEqual(sample.reference["fault_kind"], "NetworkCorrupt")
+
+    def test_validate_sample_requires_dataset_root_for_datapack(self) -> None:
+        adapter = RCATaskAdapter()
+        os.environ.pop("AGENTM_RCA_DATASET_ROOT", None)
+        with self.assertRaises(ValueError):
+            adapter.validate_sample(
+                {
+                    "source": "case",
+                    "question": "x",
+                    "datapack_name": "case",
+                }
+            )
 
     def test_to_task_outcome_scores_against_reference(self) -> None:
         adapter = RCATaskAdapter()

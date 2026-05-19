@@ -136,14 +136,18 @@ train_dataset:
   shuffle: true
   pin_memory: true
   type: rl
-  path: .runs/data/rcabench_full/rl_train.jsonl
+  # AgentM-processed RCA dataset; rows carry datapack_name +
+  # ground_truth and the RCATaskAdapter resolves data_dir via
+  # AGENTM_RCA_DATASET_ROOT. Same file for train + valid until a
+  # held-out split is materialized.
+  path: /home/ddq/AoyangSpace/dataset/rca/data.jsonl
 
 valid_dataset:
   batch_size: 64
   shuffle: false
   pin_memory: true
   type: rl
-  path: .runs/data/rcabench_full/rl_eval.jsonl
+  path: /home/ddq/AoyangSpace/dataset/rca/data.jsonl
 
 saver:
   experiment_name: ${experiment_name}

@@ -143,25 +143,47 @@ masking the prompt and supervising the assistant ``<think>`` + tool
 call. See ``../AgentM/contrib/extensions/llmharness/runs/`` for a
 sample bundle.
 
-## Smoke flow
+## End-to-end run order
 
-SFT smoke:
+1. **Bootstrap once** (submodule + venv):
 
-```bash
-PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_sft.train \
-  --config configs/sft/agentm_rca_sft_smoke.yaml
-```
+   ```bash
+   git submodule update --init --depth 1 third_party/AReaL
+   UV_HTTP_TIMEOUT=300 uv sync --python 3.12
+   ```
 
-RL / rollout smoke:
+2. **SFT** — consumes the llmharness/distill bundle (no other data prep needed):
 
-```bash
-PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_workflow.train \
-  --config configs/train/agentm_rca_smoke.yaml
-```
+   ```bash
+   ./scripts/run_sft_smoke.sh
+   ```
 
-The live AgentM rollout path still requires model credentials or a reachable OpenAI-style
-proxy. If you are not running under AReaL proxy injection, set `AGENTM_API_KEY` and
-optionally `AGENTM_API_BASE_URL` before invoking the AgentM runtime.
+   Equivalent to:
+
+   ```bash
+   PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_sft.train \
+     --config configs/sft/agentm_rca_sft_smoke.yaml
+   ```
+
+3. **RL** — consumes AgentM's processed RCA dataset directly. Set the
+   dataset root once so `RCATaskAdapter` can resolve each
+   `datapack_name` to an absolute case directory:
+
+   ```bash
+   export AGENTM_RCA_DATASET_ROOT=/home/ddq/AoyangSpace/dataset/rca
+
+   PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_workflow.train \
+     --config configs/train/agentm_rca_smoke.yaml
+   ```
+
+   If you have a different processed dataset, point `train_dataset.path`
+   at its `data.jsonl` (with override `-p train_dataset.path=...`).
+
+   The live AgentM rollout still needs LLM credentials: either let
+   AReaL inject its proxy, or set `OPENAI_API_KEY` / `OPENAI_BASE_URL`
+   (matched by `AGENTM_PROVIDER=openai`) before launch. Anthropic-style
+   providers are equally supported — see `agentm_rca.eval.agent` for
+   the env-var convention.
 
 ## Safe eval/infer behavior
 
