@@ -165,6 +165,12 @@ sample bundle.
      --config configs/sft/agentm_rca_sft_smoke.yaml
    ```
 
+   No GPU available? Run `scripts/sft_cpu_smoke.py` first — it loads
+   the same distill bundle on Qwen3-0.6B (CPU, ~7 min) and prints
+   per-step loss so you can confirm the chat template / loss_mask
+   wiring is healthy before booking GPUs. See its docstring for env
+   overrides.
+
 3. **RL** — consumes AgentM's processed RCA dataset directly. Set the
    dataset root once so `RCATaskAdapter` can resolve each
    `datapack_name` to an absolute case directory:
