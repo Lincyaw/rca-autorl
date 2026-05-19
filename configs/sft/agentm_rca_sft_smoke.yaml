@@ -17,23 +17,28 @@ cluster:
     type: nfs
     nfs_record_root: .runs/agentm-rca-sft-smoke/name_resolve
 
+# Distill output from llmharness — extractor.jsonl carries 190 rows of
+# {input.{system,user}, target.messages[<think>...</think> + tool_calls]}
+# for the 10-case sft-10case-2026-05-18 bundle. Path is relative to the
+# rca-autorl working dir; override with -p train_dataset.path=... when
+# pointing at a different distill output.
 train_dataset:
   type: sft
-  path: .runs/data/agentm_rca_smoke/sft.jsonl
+  path: ../AgentM/contrib/extensions/llmharness/runs/sft-10case-2026-05-18/extractor.jsonl
   batch_size: 1
-  shuffle: false
+  shuffle: true
   pin_memory: false
   num_workers: 0
-  max_length: 4096
+  max_length: 32768
 
 valid_dataset:
   type: sft
-  path: .runs/data/agentm_rca_smoke/sft.jsonl
+  path: ../AgentM/contrib/extensions/llmharness/runs/sft-10case-2026-05-18/extractor.jsonl
   batch_size: 1
   shuffle: false
   pin_memory: false
   num_workers: 0
-  max_length: 4096
+  max_length: 32768
 
 saver:
   experiment_name: ${experiment_name}
@@ -71,16 +76,20 @@ actor:
   backend: "fsdp:d1p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-0.5B-Instruct
+  # Qwen3-4B-Thinking-2507 — native <think> tag support, vocab/template
+  # matches the distill output's Qwen/GLM shape (assistant.content
+  # carries <think>...</think>; tool_calls list carries the terminal
+  # submit_events / submit_verdict call).
+  path: Qwen/Qwen3-4B-Thinking-2507
   init_from_scratch: false
   gradient_checkpointing: true
   dtype: bfloat16
   attn_impl: sdpa
   mb_spec:
-    max_tokens_per_mb: 4096
+    max_tokens_per_mb: 32768
   optimizer:
     type: adam
-    lr: 2e-5
+    lr: 1e-5
     weight_decay: 0.05
     beta1: 0.9
     beta2: 0.95
