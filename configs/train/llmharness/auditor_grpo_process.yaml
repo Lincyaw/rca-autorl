@@ -1,0 +1,184 @@
+# data assumed: see llmharness-distill rl-prompts / annotate-case-outcome
+#
+# SFT + GRPO with deterministic process reward over the v19 auditor
+# tool surface. Reward composite: 0.5*finalize + 0.3*witness - 0.2*efficiency.
+experiment_name: autorl-llmharness-auditor-grpo-process
+trial_name: local
+
+seed: 1
+enable_offload: false
+total_train_epochs: 1
+total_train_steps: 1
+tokenizer_path: ${actor.path}
+
+workflow: autorl.workflows.agent.AReaLNativeAgentWorkflow
+eval_workflow: ${workflow}
+infer_workflow: ${workflow}
+task_adapter_path: autorl.tasks.llmharness_firing.LlmharnessAuditorFiringTaskAdapter
+agent_runtime_path: autorl.runtime.llmharness_auditor.LlmharnessAuditorRuntime
+reward_strategy_path: autorl.rewards.llmharness_auditor.LlmharnessAuditorProcessRewardStrategy
+tool_gateway_mode: local
+tool_gateway_base_url: null
+env_gateway_mode: none
+env_gateway_base_url: null
+trace_dir: .runs/llmharness-auditor-grpo-process/trajectories
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 1
+  fileroot: .runs/llmharness-auditor-grpo-process
+  name_resolve:
+    type: nfs
+    nfs_record_root: .runs/llmharness-auditor-grpo-process/name_resolve
+
+scheduler:
+  type: local
+
+rollout:
+  backend: "sglang:d1p1t1"
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 4
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 4
+  enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+  dump_to_file: true
+  openai:
+    mode: inline
+    export_style: individual
+    turn_discount: 1.0
+
+# GRPO uses n_samples > 1 rollouts per prompt; group-relative advantage
+# is computed across the n rollouts of the same prompt.
+gconfig:
+  n_samples: 8
+  min_new_tokens: 0
+  max_new_tokens: 1024
+  greedy: false
+  temperature: 0.9
+
+actor:
+  backend: "fsdp:d1p1t1"
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: Qwen/Qwen3-4B-Thinking-2507
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  attn_impl: sdpa
+  mb_spec:
+    max_tokens_per_mb: 4096
+  optimizer:
+    type: adam
+    lr: 5e-6
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.001
+  eps_clip: 0.2
+  temperature: ${gconfig.temperature}
+  reward_scaling: 1.0
+  reward_bias: 0.0
+  # GRPO works without a separate critic; small KL keeps the policy
+  # from drifting away from the SFT initialization.
+  kl_ctl: 0.001
+  ppo_n_minibatches: 1
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behave_imp_weight_cap: 5.0
+  adv_norm:
+    mean_level: group   # GRPO: group-relative advantage
+    std_level: group
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      mem: 16
+      cmd: python3 -m areal.infra.rpc.rpc_server
+      env_vars: {}
+
+ref:
+  backend: ${actor.backend}
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  attn_impl: ${actor.attn_impl}
+  mb_spec:
+    max_tokens_per_mb: 4096
+  optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
+
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: 32768
+  mem_fraction_static: 0.7
+
+# Prompts come from rl_prompts.jsonl (autorl.data.rl_prompts loader).
+prompt_dataset:
+  type: rl_prompts
+  path: ${LLMHARNESS_RUNS_DIR}/sft-XX/rl_prompts.jsonl
+  phase: auditor
+
+train_dataset:
+  batch_size: 1
+  shuffle: true
+  pin_memory: false
+  type: rl_prompts
+  path: ${prompt_dataset.path}
+
+valid_dataset:
+  batch_size: 1
+  shuffle: false
+  pin_memory: false
+  type: rl_prompts
+  path: ${prompt_dataset.path}
+
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: 100
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
+  tensorboard:
+    path: ${cluster.fileroot}/autorl/tensorboard
+
+max_llm_calls_per_run: 32
+max_tokens_per_trajectory: 8192
+max_tokens_per_turn: 1024
+infer_max_items: 1
+allow_train_fallback_for_eval: false
+allow_train_fallback_for_infer: false
