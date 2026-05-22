@@ -30,12 +30,10 @@ from autorl.runtime.base import AgentRuntime
 from autorl.tasks.base import TaskAdapter
 
 _TOOL_STOP_TOKENS = ["\n<tool_response>", "<tool_response>"]
-_GRAPH_EDIT_OPS = {
-    "add_node",
-    "update_node",
+_EDIT_TOOL_NAMES = {
+    "upsert_node",
     "delete_node",
-    "add_edge",
-    "update_edge",
+    "upsert_edge",
     "delete_edge",
 }
 
@@ -43,19 +41,16 @@ GRAPH_EDIT_RL_HINT = """You are still the llmharness cognitive-audit extractor.
 Use the same event schema and reference rules as before, but the runtime now
 executes the real AgentM extractor tools.
 
-For RL, the first tool call MUST be an incremental graph_edit. Do not call
-submit_events_batch until at least one graph_edit call succeeds:
-- graph_edit({"op":"add_node","node":{...}})
-- graph_edit({"op":"update_node","node_id":1,"node":{...}})
-- graph_edit({"op":"delete_node","node_id":1})
-- graph_edit({"op":"add_edge","edge":{"src":1,"dst":2,"kind":"data","reason":"...","cited_entities":["..."]}})
-- graph_edit({"op":"update_edge","edge_selector":{"src":1,"dst":2},"edge":{...}})
-- graph_edit({"op":"delete_edge","edge_selector":{"src":1,"dst":2}})
+For RL, the first tool call MUST be an atomic graph edit before finalization:
+- upsert_node({"id":1,"kind":"evid","summary":"...","source_turns":[4]})
+- delete_node({"id":1})
+- upsert_edge({"src":1,"dst":2,"kind":"data","reason":"...","cited_entities":["..."]})
+- delete_edge({"src":1,"dst":2,"kind":"data"})
 
-After graph_edit calls, finalize with:
+After graph edit calls, finalize with:
 submit_events_batch({"events":[],"done":true})
 
-If you cannot use graph_edit yet, the legacy submit_events({"events":[...]})
+If you cannot use atomic edits yet, the legacy submit_events({"events":[...]})
 format is still accepted and will be translated to AgentM submit_events_batch.
 
 Return exactly one JSON object inside <tool_call></tool_call> per turn.
@@ -152,7 +147,7 @@ class OpsLiteToolRuntime(AgentRuntime):
         steps: list[TrajectoryStep] = []
         completion_ids: list[str] = []
         tool_payloads: list[dict[str, Any]] = []
-        op_counts = {op: 0 for op in _GRAPH_EDIT_OPS}
+        op_counts = {tool_name: 0 for tool_name in _EDIT_TOOL_NAMES}
         stats: dict[str, float] = {
             "has_tool_call": 0.0,
             "valid_json": 0.0,
@@ -216,18 +211,18 @@ class OpsLiteToolRuntime(AgentRuntime):
                 tool_name = "submit_events_batch"
                 tool_args = {"events": tool_args.get("events", []), "done": True}
                 stats["is_submit_events"] = 1.0
+            if tool_name == "graph_edit":
+                tool_name, tool_args = _translate_legacy_graph_edit(tool_args)
             tool_args = _normalize_tool_args(tool_name, tool_args, input_payload)
             tool_payload = {"name": tool_name, "arguments": tool_args}
             tool_payloads.append(tool_payload)
             stats["num_tool_calls"] += 1.0
 
-            edit_op = str(tool_args.get("op", ""))
-            if tool_name == "graph_edit":
+            if tool_name in _EDIT_TOOL_NAMES:
                 stats["is_graph_edit"] = 1.0
                 stats["num_graph_edits"] += 1.0
-                if edit_op in _GRAPH_EDIT_OPS:
-                    stats["is_edit_op"] = 1.0
-                    op_counts[edit_op] += 1
+                stats["is_edit_op"] = 1.0
+                op_counts[tool_name] += 1
             if tool_name == "submit_events_batch":
                 stats["is_submit_events_batch"] = 1.0
 
@@ -523,19 +518,39 @@ def _normalize_tool_args(
         normalized = dict(tool_args)
         normalized["events"] = _normalize_events(normalized.get("events"), payload)
         return normalized
-    if tool_name != "graph_edit":
-        return tool_args
-    normalized = dict(tool_args)
-    op = str(normalized.get("op", ""))
-    if op in {"add_node", "update_node"}:
-        node = normalized.get("node") or normalized.get("node_update")
+    if tool_name == "upsert_node":
+        node = tool_args.get("node") or tool_args.get("node_update") or tool_args
         if isinstance(node, dict):
-            normalized["node"] = _normalize_events([node], payload)[0]
+            return _normalize_events([node], payload)[0]
+        return {}
+    if tool_name == "delete_node":
+        normalized = dict(tool_args)
+        if "id" not in normalized and "node_id" in normalized:
+            normalized["id"] = normalized["node_id"]
+        return normalized
+    if tool_name == "upsert_edge":
+        edge = tool_args.get("edge") or tool_args.get("edge_update") or tool_args
+        return _normalize_edge(edge) if isinstance(edge, dict) else {}
+    if tool_name == "delete_edge":
+        selector = tool_args.get("edge_selector") or tool_args
+        return dict(selector) if isinstance(selector, dict) else {}
+    return tool_args
+
+
+def _translate_legacy_graph_edit(tool_args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    op = str(tool_args.get("op", ""))
+    if op in {"add_node", "update_node"}:
+        node = tool_args.get("node") or tool_args.get("node_update")
+        return "upsert_node", node if isinstance(node, dict) else {}
+    if op == "delete_node":
+        return "delete_node", {"id": tool_args.get("node_id")}
     if op in {"add_edge", "update_edge"}:
-        edge = normalized.get("edge") or normalized.get("edge_update")
-        if isinstance(edge, dict):
-            normalized["edge"] = _normalize_edge(edge)
-    return normalized
+        edge = tool_args.get("edge") or tool_args.get("edge_update")
+        return "upsert_edge", edge if isinstance(edge, dict) else {}
+    if op == "delete_edge":
+        selector = tool_args.get("edge_selector")
+        return "delete_edge", selector if isinstance(selector, dict) else {}
+    return "graph_edit", tool_args
 
 
 def _normalize_events(events_raw: Any, payload: Mapping[str, Any]) -> list[dict[str, Any]]:

@@ -1,5 +1,5 @@
 experiment_name: autorl-ops-lite-graph-edit-rl
-trial_name: 4b-sft-agentm-tool-smoke-v6
+trial_name: 4b-sft-agentm-atomic-edit-smoke-v7
 
 seed: 1
 enable_offload: false
