@@ -1,37 +1,19 @@
 """Reward strategy for llmharness extractor child rollouts.
 
-The extractor child agent (see
-``contrib/extensions/llmharness/src/llmharness/audit/extractor/``)
-drives an incremental graph build via the v19 tool surface:
-``upsert_node`` / ``delete_node`` / ``upsert_edge`` / ``delete_edge``
-/ ``reset_extraction`` / ``finalize_extraction``. Each edit gets
-narrow witness-validation feedback per tool call; the child terminates
-by calling ``finalize_extraction`` with no payload.
-
-This reward is deterministic — no LLM judge. It reads the trajectory's
-tool_call / tool_result events and grades three dimensions:
-
-* ``witness_pass_rate`` — fraction of tool results that came back
-  non-error. Captures how cleanly the model navigates the per-edit
-  validation feedback.
-* ``finalize_success`` — 1 iff the last tool_call was
-  ``finalize_extraction`` and its result was non-error. Without
-  finalize, downstream consumers see an unterminated firing.
-* ``efficiency_penalty`` — ``min(1, steps_used / max_steps_budget)``;
-  ``max_steps_budget`` comes from ``runtime_context.limits.max_steps``
-  (default 32).
+Delegates the witness/finalize/efficiency math to
+``llmharness.train_signals.extractor_process_reward`` so the SDK side
+and the RL side share a single source of truth. If that symbol is not
+yet available (parallel-track race), this module falls back to a
+local copy with identical semantics.
 
 Composite: ``0.5 * finalize + 0.3 * witness - 0.2 * efficiency``.
 ``trajectory.steps`` is assumed to be populated by an upstream runtime
-adapter; the runtime work itself lives in a separate PR. If
-``trajectory.steps`` has no tool events the reward is zero across the
-board (defensive — empty trajectories should never crash the rollout
-loop).
+adapter that emits paired TOOL_CALL / TOOL_RESULT events.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from autorl.contracts import RuntimeContext, TaskOutcome, TaskSample, Trajectory
 from autorl.contracts.trajectory import TrajectoryStep, TrajectoryStepType
@@ -43,11 +25,22 @@ _FINALIZE_TOOL_NAME = "finalize_extraction"
 _DEFAULT_MAX_STEPS = 32
 
 
+class ToolEvent(TypedDict, total=False):
+    """Upstream tool-event shape (matches llmharness.train_signals contract).
+
+    A ToolEvent represents one tool_call ↔ tool_result pair extracted
+    from a trajectory. ``name`` is the tool name; ``is_error`` is a
+    bool flag (True iff the call failed). ``call_id`` is informational.
+    """
+
+    name: str
+    is_error: bool
+    call_id: str
+
+
 def _tool_name(step: TrajectoryStep) -> str:
-    """Extract the tool name from a TOOL_CALL step's ``input`` payload."""
     raw: Any = step.input.get("name") or step.input.get("tool_name")
     if not raw:
-        # Some adapters nest the call under ``function`` (OpenAI tool-call shape).
         fn = step.input.get("function")
         if isinstance(fn, dict):
             raw = fn.get("name")
@@ -55,12 +48,6 @@ def _tool_name(step: TrajectoryStep) -> str:
 
 
 def _is_error(step: TrajectoryStep) -> bool:
-    """Tool-result success/failure flag.
-
-    Accepts both ``is_error`` (Anthropic-style) and ``error`` (truthy
-    object). A result with neither key is treated as success — adapters
-    that don't surface failure explicitly shouldn't penalize the model.
-    """
     out = step.output
     if "is_error" in out:
         return bool(out["is_error"])
@@ -72,12 +59,7 @@ def _is_error(step: TrajectoryStep) -> bool:
 def _pair_calls_with_results(
     steps: list[TrajectoryStep],
 ) -> list[tuple[TrajectoryStep, TrajectoryStep | None]]:
-    """Pair each TOOL_CALL with its matching TOOL_RESULT.
-
-    Pair by ``call_id`` when both sides carry it; otherwise fall back
-    to position (each call's nearest following result). Results without
-    a preceding call are dropped — they don't belong to any pairing.
-    """
+    """Pair TOOL_CALL ↔ TOOL_RESULT by ``call_id`` (fallback: position)."""
     calls = [s for s in steps if s.step_type == TrajectoryStepType.TOOL_CALL]
     results = [s for s in steps if s.step_type == TrajectoryStepType.TOOL_RESULT]
     by_call_id: dict[str, TrajectoryStep] = {
@@ -91,9 +73,6 @@ def _pair_calls_with_results(
         if call.call_id and call.call_id in by_call_id:
             match = by_call_id[call.call_id]
         else:
-            # Positional fallback: the next result strictly after this call
-            # in trajectory order. Use a moving cursor so each result is
-            # consumed at most once.
             call_idx = steps.index(call)
             while result_cursor < len(results):
                 r = results[result_cursor]
@@ -106,6 +85,77 @@ def _pair_calls_with_results(
     return pairs
 
 
+def _trajectory_to_tool_events(trajectory: Trajectory) -> list[ToolEvent]:
+    """Project a Trajectory's tool_call/tool_result steps into ToolEvent list."""
+    pairs = _pair_calls_with_results(list(trajectory.steps))
+    events: list[ToolEvent] = []
+    for call, result in pairs:
+        ev: ToolEvent = {
+            "name": _tool_name(call),
+            "is_error": _is_error(result) if result is not None else True,
+        }
+        if call.call_id:
+            ev["call_id"] = call.call_id
+        events.append(ev)
+    return events
+
+
+def _local_extractor_process_reward(
+    tool_events: list[ToolEvent],
+    max_steps_budget: int,
+) -> dict[str, float]:
+    """Fallback implementation if llmharness.train_signals is unavailable.
+
+    TODO(llmharness): swap to upstream once
+    ``llmharness.train_signals.extractor_process_reward`` is exposed.
+    """
+    if not tool_events:
+        return {
+            "reward": 0.0,
+            "witness_pass_rate": 0.0,
+            "finalize_success": 0.0,
+            "efficiency_penalty": 0.0,
+        }
+
+    pass_count = sum(1 for ev in tool_events if not ev.get("is_error", False))
+    witness_pass_rate = pass_count / len(tool_events)
+
+    last = tool_events[-1]
+    finalize_success = (
+        1.0 if last.get("name") == _FINALIZE_TOOL_NAME and not last.get("is_error", False) else 0.0
+    )
+
+    budget = max_steps_budget if max_steps_budget > 0 else _DEFAULT_MAX_STEPS
+    efficiency_penalty = min(1.0, len(tool_events) / float(budget))
+
+    composite = (
+        0.5 * finalize_success
+        + 0.3 * witness_pass_rate
+        - 0.2 * efficiency_penalty
+    )
+    return {
+        "reward": composite,
+        "witness_pass_rate": witness_pass_rate,
+        "finalize_success": finalize_success,
+        "efficiency_penalty": efficiency_penalty,
+    }
+
+
+def _call_extractor_process_reward(
+    tool_events: list[ToolEvent], max_steps_budget: int
+) -> dict[str, float]:
+    """Delegate to llmharness.train_signals.extractor_process_reward if available."""
+    try:
+        from llmharness.train_signals import (  # type: ignore[import-not-found]
+            extractor_process_reward,
+        )
+    except ImportError:
+        # TODO(llmharness): swap to upstream once exposed.
+        return _local_extractor_process_reward(tool_events, max_steps_budget)
+    result = extractor_process_reward(tool_events, max_steps_budget)
+    return {str(k): float(v) for k, v in result.items()}
+
+
 class LlmharnessExtractorRewardStrategy(RewardStrategy):
     """Witness / finalize / efficiency composite for extractor rollouts."""
 
@@ -116,59 +166,18 @@ class LlmharnessExtractorRewardStrategy(RewardStrategy):
         outcome: TaskOutcome,
         runtime_context: RuntimeContext,
     ) -> dict[str, float]:
-        steps: list[TrajectoryStep] = list(trajectory.steps)
-        pairs = _pair_calls_with_results(steps)
-
-        if not pairs:
-            return {
-                "reward": 0.0,
-                "witness_pass_rate": 0.0,
-                "finalize_success": 0.0,
-                "efficiency_penalty": 0.0,
-            }
-
-        # witness_pass_rate: among results we observed, fraction non-error.
-        observed_results = [result for _call, result in pairs if result is not None]
-        if observed_results:
-            pass_count = sum(1 for r in observed_results if not _is_error(r))
-            witness_pass_rate = pass_count / len(observed_results)
-        else:
-            witness_pass_rate = 0.0
-
-        # finalize_success: last call is ``finalize_extraction`` and its result is non-error.
-        last_call, last_result = pairs[-1]
-        finalize_success = (
-            1.0
-            if _tool_name(last_call) == _FINALIZE_TOOL_NAME
-            and last_result is not None
-            and not _is_error(last_result)
-            else 0.0
-        )
-
-        # efficiency_penalty: steps_used / budget, clipped to [0, 1].
-        budget: int = (
+        tool_events = _trajectory_to_tool_events(trajectory)
+        budget = (
             runtime_context.limits.max_steps
             if runtime_context.limits.max_steps and runtime_context.limits.max_steps > 0
             else _DEFAULT_MAX_STEPS
         )
-        steps_used = len(pairs)
-        efficiency_penalty = min(1.0, steps_used / float(budget))
-
-        composite = (
-            0.5 * finalize_success
-            + 0.3 * witness_pass_rate
-            - 0.2 * efficiency_penalty
-        )
-
-        return {
-            "reward": composite,
-            "witness_pass_rate": witness_pass_rate,
-            "finalize_success": finalize_success,
-            "efficiency_penalty": efficiency_penalty,
-        }
+        return _call_extractor_process_reward(tool_events, budget)
 
 
+# Canonical name + backward-compat alias.
+register_reward("llmharness_extractor_process", LlmharnessExtractorRewardStrategy)
 register_reward("llmharness_extractor", LlmharnessExtractorRewardStrategy)
 
 
-__all__ = ["LlmharnessExtractorRewardStrategy"]
+__all__ = ["LlmharnessExtractorRewardStrategy", "ToolEvent"]
