@@ -13,16 +13,27 @@ Consumes ``extractor.jsonl`` / ``auditor.jsonl`` produced by
                                "content": "<think>...</think>\\n\\n",
                                "tool_calls": [{"type": "function",
                                                "function": {"name": "...",
-                                                            "arguments": "..."}}]}]},
+                                                            "arguments": "..."}}]},
+                              {"role": "tool", "content": "..."},
+                              {"role": "assistant", ...},
+                              ...]},
       "meta":   {...}
     }
 
-The loader applies the tokenizer's chat template to the
-``input`` system+user pair (prompt) and to the same pair concatenated
-with ``target.messages`` (full sequence), and emits a ``loss_mask``
-that only covers the assistant segment.  This keeps the ``<think>``
-block inside the supervised range so the student learns to emit
-reasoning before the tool call.
+The loader applies the tokenizer's chat template to the ``input``
+system+user pair (prompt, with ``add_generation_prompt=True``) and
+then **incrementally** to the prompt concatenated with one additional
+``target.messages`` entry at a time. The length delta between
+consecutive tokenizations gives the per-message token span; only
+spans belonging to **assistant** roles receive ``loss_mask=1``.
+
+This matters under the v19 extractor flow: ``target.messages`` is
+a multi-turn ``[assistant, tool, assistant, tool, ..., assistant]``
+sequence. Tool messages are deterministic witness output that the
+student must NOT learn to generate — supervising tool tokens is wrong
+signal. The ``<think>`` block stays inside the supervised range
+(it sits inside each assistant message) so the student still learns
+to emit reasoning before each tool call.
 """
 
 from __future__ import annotations
@@ -77,14 +88,55 @@ def _convert_sample(sample: Mapping[str, Any], *, tokenizer: Any) -> dict[str, A
         {"role": "system", "content": system_text},
         {"role": "user", "content": user_text},
     ]
-    full_messages: list[dict[str, Any]] = [*prompt_messages, *target_messages]
 
-    prompt_ids = _apply_chat_template(tokenizer, prompt_messages, add_generation_prompt=True)
-    full_ids = _apply_chat_template(tokenizer, full_messages, add_generation_prompt=False)
-    if len(full_ids) < len(prompt_ids):
-        raise ValueError("full SFT sequence is shorter than prompt sequence")
+    # The prompt's add_generation_prompt=True suffix (e.g. Qwen's
+    # ``<|im_start|>assistant\n<think>\n``) is rendered template-side; we
+    # treat those tokens as part of the prompt range (mask=0) so the
+    # student only learns the assistant *body*, not the role header it
+    # never had to emit. Subsequent assistant turns inside a multi-turn
+    # target (after a tool message) carry their own header tokens, which
+    # the student DOES need to emit — those go into the supervised span.
+    prompt_ids = _apply_chat_template(
+        tokenizer, prompt_messages, add_generation_prompt=True
+    )
 
-    loss_mask = [0] * len(prompt_ids) + [1] * (len(full_ids) - len(prompt_ids))
+    # Incrementally tokenize prompt + first k target messages, k = 1..N.
+    # Length delta between consecutive tokenizations is the token span
+    # of message k. Supervise only spans whose role is "assistant".
+    cur_ids = prompt_ids
+    loss_mask: list[int] = [0] * len(prompt_ids)
+    full_ids: list[int] = list(prompt_ids)
+    for k, msg in enumerate(target_messages, start=1):
+        next_ids = _apply_chat_template(
+            tokenizer,
+            [*prompt_messages, *target_messages[:k]],
+            add_generation_prompt=False,
+        )
+        if len(next_ids) < len(cur_ids):
+            raise ValueError(
+                "incremental tokenization shrank the SFT sequence at "
+                f"target message {k}; tokenizer chat template is non-monotonic"
+            )
+        # Cross-check that the previous tokenization is a strict prefix.
+        # If a tokenizer rewrites earlier tokens when later messages are
+        # appended, the per-message mask attribution would be wrong.
+        if next_ids[: len(cur_ids)] != cur_ids:
+            raise ValueError(
+                "tokenizer chat template is not prefix-stable across "
+                f"turns; cannot derive per-message loss mask (turn {k})"
+            )
+        span = next_ids[len(cur_ids):]
+        role = str(msg.get("role") or "").lower()
+        mask_bit = 1 if role == "assistant" else 0
+        loss_mask.extend([mask_bit] * len(span))
+        full_ids = next_ids
+        cur_ids = next_ids
+
+    if len(loss_mask) != len(full_ids):
+        raise ValueError(
+            "loss_mask length drifted from input_ids length "
+            f"({len(loss_mask)} vs {len(full_ids)}) — internal bug"
+        )
     return {
         "input_ids": full_ids,
         "loss_mask": loss_mask,
