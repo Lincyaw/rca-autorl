@@ -69,14 +69,30 @@ from autorl.tasks.rca import RCATaskAdapter  # noqa: E402
 
 
 class _StubTokenizer:
-    """Mimics HF tokenizer.apply_chat_template enough for unit-level checks."""
+    """Mimics HF tokenizer.apply_chat_template enough for unit-level checks.
 
-    def __init__(self) -> None:
-        self._counter = 0
+    Prefix-stable across turns so the multi-turn loss-mask builder can
+    derive per-message spans (real Qwen / GLM thinking templates have
+    this property by construction).
+    """
+
+    _GEN_HEADER = (253,)  # mimics ``<|im_start|>assistant\n<think>\n``
+    _ROLE_SEP = 254
 
     def apply_chat_template(self, messages, *, tokenize=True, add_generation_prompt=False):
         ids: list[int] = []
-        for m in messages:
+        for idx, m in enumerate(messages):
+            role = (m.get("role") or "").lower()
+            # The first assistant message's "header" (gen prompt) collapses
+            # into the prompt baseline iff a previous tokenization passed
+            # add_generation_prompt=True — see Qwen behaviour. We emit it
+            # only when transitioning from a non-assistant context to an
+            # assistant message, so subsequent tokenizations that include
+            # this message reproduce the same prefix.
+            if role == "assistant":
+                prev_role = (messages[idx - 1].get("role") if idx > 0 else "") or ""
+                if prev_role.lower() != "assistant":
+                    ids.extend(self._GEN_HEADER)
             content = m.get("content") or ""
             tool_calls = m.get("tool_calls") or []
             for ch in content:
@@ -85,9 +101,12 @@ class _StubTokenizer:
                 arg_text = (tc.get("function") or {}).get("arguments") or ""
                 for ch in str(arg_text):
                     ids.append(ord(ch) % 256)
-            ids.append(254)  # role-separator marker
+            ids.append(self._ROLE_SEP)
         if add_generation_prompt:
-            ids.append(253)
+            # Last message in the prompt is always non-assistant (system/user/tool);
+            # emit the same header that the first asst chunk would otherwise emit,
+            # so prompt+gen is a strict prefix of prompt+1asst (no gen).
+            ids.extend(self._GEN_HEADER)
         return ids
 
 
