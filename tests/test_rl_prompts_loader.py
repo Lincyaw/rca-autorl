@@ -39,7 +39,11 @@ _ROWS = [
         "sample_id": "case-1:firing-0",
         "source_case_id": "case-1",
         "firing_index": 0,
-        "input": {"system": "you are extractor", "user": "extract from log A"},
+        "root_session_id": "case-1-sess",
+        "turn_index": 0,
+        "compose_kwargs": {"base_prompt": "you are extractor"},
+        "payload": {"user": "extract from log A"},
+        "provider": None,
         "meta": {},
     },
     {
@@ -47,7 +51,11 @@ _ROWS = [
         "sample_id": "case-1:firing-1",
         "source_case_id": "case-1",
         "firing_index": 1,
-        "input": {"system": "you are extractor", "user": "extract from log B"},
+        "root_session_id": "case-1-sess",
+        "turn_index": 1,
+        "compose_kwargs": {"base_prompt": "you are extractor"},
+        "payload": {"user": "extract from log B"},
+        "provider": None,
         "meta": {},
     },
     {
@@ -55,7 +63,11 @@ _ROWS = [
         "sample_id": "case-2:firing-0",
         "source_case_id": "case-2",
         "firing_index": 0,
-        "input": {"system": "you are auditor", "user": "audit graph X"},
+        "root_session_id": "case-2-sess",
+        "turn_index": 0,
+        "compose_kwargs": {"base_prompt": "you are auditor"},
+        "payload": {"user": "audit graph X"},
+        "provider": None,
         "meta": {},
     },
 ]
@@ -90,6 +102,7 @@ class RlPromptsLoaderTests(unittest.TestCase):
         self.assertEqual(msgs[0]["role"], "system")
         self.assertEqual(msgs[1]["role"], "user")
         self.assertIn("extractor", msgs[0]["content"])
+        # The user side is the JSON-serialized payload.
         self.assertIn("log A", msgs[1]["content"])
 
     def test_missing_keys_raise(self) -> None:

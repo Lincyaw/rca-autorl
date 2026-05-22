@@ -1,19 +1,30 @@
 """Prompt-only loader for online RL (GRPO / PPO).
 
 Consumes ``rl_prompts.jsonl`` produced by
-``llmharness-distill rl-prompts``. Each row::
+``llmharness-distill rl-prompts``. Each row is a
+**stripped-ReplayRecord** dict — i.e. ``ReplayRecord.to_dict()`` minus
+the teacher-output fields (``output``, ``status``, ``error``,
+``latency_ms``, ``raw_assistant_messages``). The runtime side
+re-hydrates the record via ``ReplayRecord.from_dict(row)`` and replays
+it through llmharness's ``replay_extractor_record`` /
+``replay_auditor_record`` helpers.
+
+Concretely, each row carries at least::
 
     {
       "phase": "extractor" | "auditor",
-      "sample_id": "...",
-      "source_case_id": "...",
-      "firing_index": ...,
-      "input": {"system": "...", "user": "..."},
-      "meta": {...}
+      "root_session_id": "...",
+      "turn_index": ...,
+      "ts_ns": ...,
+      "compose_kwargs": {...},   # composer args (carries prompts)
+      "payload": {...},          # the dict sent to child.prompt(...)
+      "provider": [...] | null,
+      ...optional: sample_id, source_case_id, firing_index, meta...
     }
 
-Returns a flat list of dicts (no tokenization here) plus a helper that
-converts one row into chat-template-ready ``[system, user]`` messages.
+This loader does **not** inspect ``compose_kwargs`` / ``payload``; it
+just validates that the row has the keys the runtime needs and returns
+the dicts as-is.
 """
 
 from __future__ import annotations
@@ -56,23 +67,33 @@ def load_rl_prompts(
 
 
 def _validate_row(row: dict[str, Any], line_no: int) -> None:
-    for key in ("phase", "sample_id", "input"):
+    # The runtime path needs payload + compose_kwargs to rebuild a
+    # ReplayRecord; everything else is best-effort metadata.
+    for key in ("phase", "payload", "compose_kwargs"):
         if key not in row:
-            raise ValueError(f"rl_prompts row {line_no} missing key '{key}'")
-    inp = row["input"]
-    if not isinstance(inp, dict) or "system" not in inp or "user" not in inp:
-        raise ValueError(
-            f"rl_prompts row {line_no} 'input' must carry both 'system' and 'user'"
-        )
+            raise ValueError(
+                f"rl_prompts row {line_no} missing key '{key}' "
+                "(expected stripped-ReplayRecord shape)"
+            )
 
 
 def to_chat_messages(row: dict[str, Any]) -> list[dict[str, str]]:
-    """Convert one rl_prompt row into ``[system, user]`` chat messages."""
-    inp = row.get("input")
-    if not isinstance(inp, dict):
-        raise ValueError("rl_prompt row missing 'input'")
-    system = str(inp.get("system", ""))
-    user = str(inp.get("user", ""))
+    """Best-effort chat-template view for tokenization-only callers.
+
+    Real RL drivers should pass the full row to the runtime instead —
+    this helper is only useful for SFT-style consumers that want to
+    tokenize a flat ``[system, user]`` pair. The system prompt is
+    pulled from ``compose_kwargs.base_prompt`` (or
+    ``compose_kwargs.prompt_override`` for legacy sidecars); the user
+    side is the JSON-serialized payload (matching what
+    ``child.prompt(json.dumps(payload))`` sends in the live path).
+    """
+    ck = row.get("compose_kwargs") or {}
+    payload = row.get("payload") or {}
+    if not isinstance(ck, dict) or not isinstance(payload, dict):
+        raise ValueError("rl_prompt row 'compose_kwargs' / 'payload' must be dicts")
+    system = str(ck.get("base_prompt") or ck.get("prompt_override") or "")
+    user = json.dumps(payload, ensure_ascii=False)
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},

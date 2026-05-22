@@ -1,13 +1,12 @@
-"""Tests for the llmharness firing TaskAdapters + stub runtimes."""
+"""Tests for the llmharness firing TaskAdapters (new stripped-ReplayRecord shape)."""
 
 from __future__ import annotations
 
-import asyncio
 import importlib.machinery
 import sys
 import types
-import unittest
 from pathlib import Path
+import unittest
 
 
 def _ensure_areal_stub() -> None:
@@ -66,42 +65,6 @@ src_path = Path(__file__).resolve().parents[1] / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from autorl.contracts import RuntimeContext  # noqa: E402
-from autorl.contracts.runtime import RuntimeLimits  # noqa: E402
-
-# Load the runtime stub modules directly from file to avoid triggering
-# ``autorl.runtime.__init__`` (which transitively imports heavy deps
-# like qwen_agent / openai / sglang that aren't installed for unit
-# tests). The stubs themselves only depend on autorl.contracts.
-import importlib.util as _ilu  # noqa: E402
-
-def _load_module(dotted: str, path: Path):  # type: ignore[no-untyped-def]
-    spec = _ilu.spec_from_file_location(dotted, path)
-    assert spec and spec.loader
-    mod = _ilu.module_from_spec(spec)
-    sys.modules[dotted] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-# Ensure parent package object exists without executing its __init__.
-if "autorl.runtime" not in sys.modules:
-    pkg = types.ModuleType("autorl.runtime")
-    pkg.__path__ = [str(src_path / "autorl" / "runtime")]  # type: ignore[attr-defined]
-    sys.modules["autorl.runtime"] = pkg
-
-# Load base + stub runtime modules from file.
-_load_module("autorl.runtime.base", src_path / "autorl" / "runtime" / "base.py")
-_extractor_mod = _load_module(
-    "autorl.runtime.llmharness_extractor",
-    src_path / "autorl" / "runtime" / "llmharness_extractor.py",
-)
-_auditor_mod = _load_module(
-    "autorl.runtime.llmharness_auditor",
-    src_path / "autorl" / "runtime" / "llmharness_auditor.py",
-)
-LlmharnessExtractorRuntime = _extractor_mod.LlmharnessExtractorRuntime
-LlmharnessAuditorRuntime = _auditor_mod.LlmharnessAuditorRuntime
 
 from autorl.tasks.llmharness_firing import (  # noqa: E402
     LlmharnessAuditorFiringTaskAdapter,
@@ -109,15 +72,24 @@ from autorl.tasks.llmharness_firing import (  # noqa: E402
 )
 
 
-_ROW = {
+# A stripped-ReplayRecord-shaped row (no output/status/error/latency_ms/
+# raw_assistant_messages — those are the teacher-output fields the
+# distill CLI strips).
+_ROW: dict = {
     "phase": "extractor",
     "sample_id": "case-1:firing-0",
     "source_case_id": "case-1",
     "firing_index": 0,
-    "input": {
-        "system": "you are an extractor",
-        "user": "extract from log fragment X",
+    "root_session_id": "sess-abc",
+    "turn_index": 0,
+    "ts_ns": 1_700_000_000_000_000_000,
+    "compose_kwargs": {
+        "base_prompt": "you are an extractor",
+        "cards_tools_config": None,
+        "observability_config": None,
     },
+    "payload": {"recent_graph": [], "next_event_id": 1, "user": "extract from log"},
+    "provider": None,
     "meta": {"datapack_name": "ts0-mysql-corrupt-kwx8n5"},
 }
 
@@ -128,22 +100,23 @@ class FiringAdapterTests(unittest.TestCase):
         sample = adapter.validate_sample(_ROW)
         self.assertEqual(sample.sample_id, "case-1:firing-0")
         self.assertEqual(sample.task_type, "llmharness_extractor_firing")
-        self.assertEqual(sample.input["system"], "you are an extractor")
         self.assertEqual(sample.metadata.get("source_case_id"), "case-1")
         self.assertEqual(sample.metadata.get("firing_index"), 0)
+        self.assertEqual(sample.metadata.get("phase"), "extractor")
+        self.assertEqual(sample.metadata.get("root_session_id"), "sess-abc")
         self.assertEqual(
             sample.metadata.get("datapack_name"), "ts0-mysql-corrupt-kwx8n5"
         )
 
-    def test_extractor_adapter_to_agent_input(self) -> None:
+    def test_extractor_adapter_to_agent_input_passes_full_row(self) -> None:
         adapter = LlmharnessExtractorFiringTaskAdapter()
         sample = adapter.validate_sample(_ROW)
         agent_input = adapter.to_agent_input(sample)
-        self.assertEqual(agent_input.sample_id, "case-1:firing-0")
-        self.assertEqual(len(agent_input.messages), 2)
-        self.assertEqual(agent_input.messages[0]["role"], "system")
-        self.assertEqual(agent_input.messages[1]["role"], "user")
-        self.assertIn("extract", agent_input.messages[1]["content"])
+        # The runtime rehydrates the full ReplayRecord — so raw_sample
+        # must round-trip every key the row carried.
+        for key in ("phase", "payload", "compose_kwargs", "root_session_id"):
+            self.assertEqual(agent_input.raw_sample[key], _ROW[key])
+        self.assertEqual(agent_input.context.get("phase"), "extractor")
 
     def test_auditor_adapter_task_type(self) -> None:
         row = {**_ROW, "phase": "auditor"}
@@ -151,30 +124,27 @@ class FiringAdapterTests(unittest.TestCase):
         sample = adapter.validate_sample(row)
         self.assertEqual(sample.task_type, "llmharness_auditor_firing")
 
-    def test_missing_input_raises(self) -> None:
+    def test_extractor_adapter_rejects_wrong_phase(self) -> None:
         adapter = LlmharnessExtractorFiringTaskAdapter()
         with self.assertRaises(ValueError):
-            adapter.validate_sample({"sample_id": "x"})
+            adapter.validate_sample({**_ROW, "phase": "auditor"})
 
-    def test_extractor_stub_runtime_produces_non_empty_trajectory(self) -> None:
+    def test_missing_phase_raises(self) -> None:
         adapter = LlmharnessExtractorFiringTaskAdapter()
-        sample = adapter.validate_sample(_ROW)
-        agent_input = adapter.to_agent_input(sample)
-        ctx = RuntimeContext(mode="eval", limits=RuntimeLimits(max_steps=32))
-        result = asyncio.run(LlmharnessExtractorRuntime().run(agent_input, ctx))
-        self.assertGreater(len(result.trajectory.steps), 0)
-        self.assertEqual(result.trajectory.sample_id, "case-1:firing-0")
-        # to_task_outcome bridges trajectory → outcome
-        outcome = adapter.to_task_outcome(sample, result.trajectory)
-        self.assertEqual(outcome.sample_id, "case-1:firing-0")
+        with self.assertRaises(ValueError):
+            adapter.validate_sample({"sample_id": "x", "payload": {}, "compose_kwargs": {}})
 
-    def test_auditor_stub_runtime_produces_non_empty_trajectory(self) -> None:
-        adapter = LlmharnessAuditorFiringTaskAdapter()
-        sample = adapter.validate_sample({**_ROW, "phase": "auditor"})
-        agent_input = adapter.to_agent_input(sample)
-        ctx = RuntimeContext(mode="eval", limits=RuntimeLimits(max_steps=32))
-        result = asyncio.run(LlmharnessAuditorRuntime().run(agent_input, ctx))
-        self.assertGreater(len(result.trajectory.steps), 0)
+    def test_missing_payload_raises(self) -> None:
+        adapter = LlmharnessExtractorFiringTaskAdapter()
+        bad = {k: v for k, v in _ROW.items() if k != "payload"}
+        with self.assertRaises(ValueError):
+            adapter.validate_sample(bad)
+
+    def test_sample_id_derived_when_absent(self) -> None:
+        adapter = LlmharnessExtractorFiringTaskAdapter()
+        bad = {k: v for k, v in _ROW.items() if k != "sample_id"}
+        sample = adapter.validate_sample(bad)
+        self.assertEqual(sample.sample_id, "sess-abc:turn-0")
 
 
 if __name__ == "__main__":
