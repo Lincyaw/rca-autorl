@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "areal[sglang]",
     "agentm",
+    "llmharness",
 ]
 
 [build-system]
@@ -22,6 +23,7 @@ where = ["src"]
 [tool.uv.sources]
 areal = { path = "third_party/AReaL", editable = true }
 agentm = { path = "../AgentM", editable = true }
+llmharness = { path = "../AgentM/contrib/extensions/llmharness", editable = true }
 torch = { index = "pytorch-cu129" }
 torchaudio = { index = "pytorch-cu129" }
 torchvision = { index = "pytorch-cu129" }

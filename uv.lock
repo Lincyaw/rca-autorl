@@ -54,6 +54,9 @@ source = { editable = "../AgentM" }
 dependencies = [
     { name = "anthropic" },
     { name = "openai" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-sdk" },
     { name = "pathspec" },
     { name = "python-dotenv" },
     { name = "python-frontmatter" },
@@ -66,16 +69,16 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.86.0" },
     { name = "arl-env", marker = "extra == 'agent-env'", specifier = ">=0.2.0" },
     { name = "openai", specifier = ">=1.50.0" },
-    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.27.0" },
-    { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.27.0" },
-    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.27.0" },
+    { name = "opentelemetry-api", specifier = ">=1.27.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.27.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
     { name = "pathspec", specifier = ">=1.0.4" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-frontmatter", specifier = ">=1.1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "typer", specifier = ">=0.25.1" },
 ]
-provides-extras = ["agent-env", "otel"]
+provides-extras = ["agent-env"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2114,6 +2117,25 @@ wheels = [
 ]
 
 [[package]]
+name = "llmharness"
+version = "0.3.0"
+source = { editable = "../AgentM/contrib/extensions/llmharness" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pyyaml", specifier = ">=6" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "typer", specifier = ">=0.12" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "llvmlite"
 version = "0.47.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -2798,8 +2820,8 @@ name = "opentelemetry-exporter-otlp"
 version = "1.41.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 dependencies = [
-    { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-exporter-otlp-proto-http", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/65/b7/845565a2ab5d22c1486bc7729a06b05cd0964c61539d766e1f107c9eea0c/opentelemetry_exporter_otlp-1.41.0.tar.gz", hash = "sha256:97ff847321f8d4c919032a67d20d3137fb7b34eac0c47f13f71112858927fc5b" }
 wheels = [
@@ -2811,7 +2833,7 @@ name = "opentelemetry-exporter-otlp-proto-common"
 version = "1.41.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 dependencies = [
-    { name = "opentelemetry-proto", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
+    { name = "opentelemetry-proto" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/8c/28/e8eca94966fe9a1465f6094dc5ddc5398473682180279c94020bc23b4906/opentelemetry_exporter_otlp_proto_common-1.41.0.tar.gz", hash = "sha256:966bbce537e9edb166154779a7c4f8ab6b8654a03a28024aeaf1a3eacb07d6ee" }
 wheels = [
@@ -2823,13 +2845,13 @@ name = "opentelemetry-exporter-otlp-proto-grpc"
 version = "1.41.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 dependencies = [
-    { name = "googleapis-common-protos", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "grpcio", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-api", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-exporter-otlp-proto-common", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-proto", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-sdk", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
+    { name = "googleapis-common-protos" },
+    { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/42/46/d75a3f8c91915f2e58f61d0a2e4ada63891e7c7a37a20ff7949ba184a6b2/opentelemetry_exporter_otlp_proto_grpc-1.41.0.tar.gz", hash = "sha256:f704201251c6f65772b11bddea1c948000554459101bdbb0116e0a01b70592f6" }
 wheels = [
@@ -2841,13 +2863,13 @@ name = "opentelemetry-exporter-otlp-proto-http"
 version = "1.41.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 dependencies = [
-    { name = "googleapis-common-protos", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-api", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-exporter-otlp-proto-common", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-proto", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "opentelemetry-sdk", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "requests", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
-    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_python_implementation != 'CPython' and sys_platform == 'linux')" },
+    { name = "googleapis-common-protos" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+    { name = "requests" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/19/63/d9f43cd75f3fabb7e01148c89cfa9491fc18f6580a6764c554ff7c953c46/opentelemetry_exporter_otlp_proto_http-1.41.0.tar.gz", hash = "sha256:dcd6e0686f56277db4eecbadd5262124e8f2cc739cadbc3fae3d08a12c976cf5" }
 wheels = [
@@ -3782,12 +3804,14 @@ source = { editable = "." }
 dependencies = [
     { name = "agentm" },
     { name = "areal", extra = ["sglang"] },
+    { name = "llmharness" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agentm", editable = "../AgentM" },
     { name = "areal", extras = ["sglang"], editable = "third_party/AReaL" },
+    { name = "llmharness", editable = "../AgentM/contrib/extensions/llmharness" },
 ]
 
 [[package]]
