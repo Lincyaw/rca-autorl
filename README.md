@@ -87,6 +87,11 @@ working tree (the legacy `third_party/agentm` submodule was removed during the
 migration to the new harness-sync scenario).  The repo targets Python 3.12 so
 `agentm` and `autorl` share one environment.
 
+For serving a Qwen3.5 searcher SFT checkpoint through SGLang and AgentM's
+`verifier_v2/searcher` scenario, see
+`docs/agentm_searcher_sglang.md`. It records the no-think chat-template default,
+EOS alignment, and SGLang parser settings needed for stable XML tool calls.
+
 - RCA adapter: `autorl.tasks.rca.RCATaskAdapter`
 - AgentM runtime: `autorl.runtime.agentm.AgentMRuntime`
 - RCA reward: `autorl.rewards.rca.RootCauseMatchRewardStrategy`
