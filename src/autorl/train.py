@@ -23,7 +23,7 @@ class AgentMConfig:
 
 
 @dataclass
-class RCAPPOConfig(PPOConfig):
+class RCAPPOConfig(PPOConfig):  # type: ignore[misc]  # AReaL has no py.typed marker
     econfig: AgentMConfig = field(default_factory=AgentMConfig)
 
 
@@ -48,9 +48,7 @@ def main(args: list[str]) -> None:
     config, _ = load_expr_config(args, RCAPPOConfig)
     train_dataset = load_rca_dataset(config.train_dataset.path)
     valid_dataset = (
-        load_rca_dataset(config.valid_dataset.path)
-        if config.valid_dataset is not None
-        else None
+        load_rca_dataset(config.valid_dataset.path) if config.valid_dataset is not None else None
     )
     workflow_kwargs = {"econfig": asdict(config.econfig)}
 
@@ -62,9 +60,7 @@ def main(args: list[str]) -> None:
         trainer.train(
             workflow="autorl.agent.AgentMWorkflow",
             workflow_kwargs=workflow_kwargs,
-            eval_workflow="autorl.agent.AgentMWorkflow"
-            if valid_dataset is not None
-            else None,
+            eval_workflow="autorl.agent.AgentMWorkflow" if valid_dataset is not None else None,
             eval_workflow_kwargs=workflow_kwargs,
         )
 

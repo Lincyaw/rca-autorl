@@ -32,9 +32,7 @@ class AgentMWorkflow:
             config.get("dataset_root") or os.getenv("AGENTM_RCA_DATASET_ROOT") or ""
         )
 
-    async def run(
-        self, data: dict[str, Any], **extra_kwargs: Any
-    ) -> dict[str, float]:
+    async def run(self, data: dict[str, Any], **extra_kwargs: Any) -> dict[str, float]:
         base_url = extra_kwargs.get("base_url")
         if not base_url:
             raise ValueError("AReaL did not provide a rollout proxy base_url")

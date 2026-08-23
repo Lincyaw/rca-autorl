@@ -19,7 +19,7 @@ paper/
   (later)            — 后续会有 sections/、figures/、experiments/ 等
 src/autorl/          — AgentM workflow、RCA verifier 与 AReaL 训练入口
 experiments/         — 实验配置、运行脚本、结果记录
-third_party/         — AReaL、agentm 等子模块
+third_party/         — AReaL 子模块；AgentM 通过锁定版本的 SDK package 引入
 ```
 
 ## 当前研究状态
@@ -45,7 +45,7 @@ third_party/         — AReaL、agentm 等子模块
 > Phase = 结果里程碑轴（本节）。Stage = 训练过程轴（见 `.doc/designs/training-pipeline.md`）。两轴正交。
 
 ### Scaffold（始终激活）
-1. **Pipeline health** — lint clean + core imports pass (`python3 -m ruff check src`)
+1. **Pipeline health** — Ruff 和 mypy 全部通过（`./scripts/check.sh`）
 2. **Integration simplicity** — Agent loop 留在 AgentM；本仓库仅负责 data、workflow、verifier 与 trainer wiring
 
 ### Phase 1 — RCA baseline
@@ -75,10 +75,10 @@ Secondary criterion: **simplicity** — 同等指标下选代码更少的方案�
 ## Project conventions
 
 - Package manager: `uv` (not pip). Use `uv sync` to install, `uv run` to execute.
-- Lint: `uv run ruff check src`
+- Static checks: `./scripts/check.sh` (Ruff lint/format + mypy)
 - Smoke test: `./scripts/run_smoke.sh`
 - Python: 3.12, `src/` layout, type hints required
-- Third-party deps (AReaL, agentm) are editable submodules under `third_party/`
+- AReaL is a submodule; AgentM is a pinned SDK package dependency
 - Language: discussion in Chinese, code/docs in English
 
 ## Active skills

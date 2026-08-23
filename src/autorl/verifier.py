@@ -43,15 +43,13 @@ def _fpg_score(prediction: Any, graph_path: Path) -> float:
         scenario = Scenario.model_validate_json(graph_path.read_text(encoding="utf-8"))
         comparison = compare_model_to_ground_truth(output, scenario)
         return float(comparison.score)
-    except Exception:  # noqa: BLE001 -- a malformed prediction earns zero reward
+    except Exception:
         # Invalid agent output is a failed episode, not a failed training job.
         return 0.0
 
 
 def _legacy_score(sample: Mapping[str, Any], prediction: Any) -> tuple[float, float]:
-    expected_services = (
-        sample.get("expected_services") or sample.get("ground_truth") or []
-    )
+    expected_services = sample.get("expected_services") or sample.get("ground_truth") or []
     if not isinstance(expected_services, list):
         expected_services = []
     expected_fault = sample.get("fault_kind") or sample.get("fault_type") or ""

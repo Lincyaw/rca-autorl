@@ -31,15 +31,17 @@ framework inside this repository.
 
 ## Setup
 
-The checkout expects AReaL as a submodule and AgentM as a sibling repository:
+The checkout uses AReaL as a submodule and AgentM's published SDK package:
 
 ```bash
 git submodule update --init --recursive
 UV_HTTP_TIMEOUT=300 uv sync --python 3.12
 ```
 
-`agentm[eval]` installs AgentM's RCA scenario, including the `rca_eval` adapter and FPG
-grader used by rollout workers.
+`agentm[eval]` is consumed as a pinned SDK package. Its RCA scenario supplies the
+`rca_eval.AgentMAgent` adapter and FPG grader used by rollout workers. It is not
+overridden by a sibling checkout, so local development, CI, and the training host
+resolve the same SDK contract.
 
 ## RL
 
@@ -81,8 +83,17 @@ Override the dataset or model with normal AReaL config patches:
 ## Validation
 
 ```bash
+uv sync --dev
+uv run pre-commit install
+./scripts/check.sh
+```
+
+The commit hook and GitHub Actions both run Ruff linting, Ruff formatting checks, and
+mypy. Unit tests remain a separate command because some SFT coverage uses a locally
+cached model tokenizer:
+
+```bash
 python -m unittest discover -s tests
-uv run ruff check src tests
 ```
 
 An end-to-end smoke additionally requires a GPU, the RCA dataset, and working AgentM

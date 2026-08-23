@@ -33,19 +33,14 @@ class AgentMWorkflowTest(unittest.IsolatedAsyncioTestCase):
             async def run(self, **kwargs):
                 captured.update(kwargs)
                 return SimpleNamespace(
-                    response=(
-                        '{"root_causes":[{"service":"mysql",'
-                        '"fault_kind":"cpu_stress"}]}'
-                    ),
+                    response=('{"root_causes":[{"service":"mysql","fault_kind":"cpu_stress"}]}'),
                     metadata={"submit_final_report_seen": True},
                 )
 
         package = ModuleType("rca_eval")
         module = ModuleType("rca_eval.agent")
         module.AgentMAgent = FakeAgent
-        with patch.dict(
-            "sys.modules", {"rca_eval": package, "rca_eval.agent": module}
-        ):
+        with patch.dict("sys.modules", {"rca_eval": package, "rca_eval.agent": module}):
             reward = await AgentMWorkflow({"model": "policy"}).run(
                 {
                     "question": "what failed?",

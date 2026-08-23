@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from datasets import Dataset
@@ -89,7 +89,7 @@ def _tokenize_num_proc() -> int:
 
 
 def _convert_samples_parallel(
-    samples: list[Mapping[str, Any]],
+    samples: Sequence[Mapping[str, Any]],
     tokenizer: Any,
     *,
     max_length: int | None,
@@ -120,9 +120,7 @@ def _convert_sample_worker(sample: Mapping[str, Any]) -> dict[str, Any] | None:
 def _convert_sample(sample: Mapping[str, Any], *, tokenizer: Any) -> dict[str, Any]:
     input_payload = sample.get("input")
     target_payload = sample.get("target")
-    if not isinstance(input_payload, Mapping) or not isinstance(
-        target_payload, Mapping
-    ):
+    if not isinstance(input_payload, Mapping) or not isinstance(target_payload, Mapping):
         raise TypeError(
             "SFT row must carry 'input' and 'target' objects (llmharness/distill shape)"
         )
@@ -148,9 +146,7 @@ def _convert_sample(sample: Mapping[str, Any], *, tokenizer: Any) -> dict[str, A
     # never had to emit. Subsequent assistant turns inside a multi-turn
     # target (after a tool message) carry their own header tokens, which
     # the student DOES need to emit — those go into the supervised span.
-    prompt_ids = _apply_chat_template(
-        tokenizer, prompt_messages, add_generation_prompt=True
-    )
+    prompt_ids = _apply_chat_template(tokenizer, prompt_messages, add_generation_prompt=True)
 
     if _has_tool_turns(target_messages):
         full_ids, loss_mask = _convert_with_role_offsets(
@@ -326,9 +322,7 @@ def _apply_chat_template(
     add_generation_prompt: bool,
 ) -> list[int]:
     if not hasattr(tokenizer, "apply_chat_template"):
-        raise ValueError(
-            "tokenizer must support apply_chat_template (Qwen/GLM thinking models do)"
-        )
+        raise ValueError("tokenizer must support apply_chat_template (Qwen/GLM thinking models do)")
     token_ids = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
