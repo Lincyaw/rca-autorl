@@ -35,4 +35,4 @@ if [[ ! -d "$ROOT_DIR/.venv" ]]; then
   exit 3
 fi
 
-python3 -m autorl.experiments.agent_sft.train --config "$CONFIG" "$@"
+python3 -m autorl.train_sft --config "$CONFIG" "$@"

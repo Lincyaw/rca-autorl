@@ -7,17 +7,12 @@ total_train_epochs: 1
 total_train_steps: 1
 tokenizer_path: ${actor.path}
 
-workflow: autorl.workflows.agent.AReaLNativeAgentWorkflow
-eval_workflow: ${workflow}
-infer_workflow: ${workflow}
-task_adapter_path: autorl.tasks.rca.RCATaskAdapter
-agent_runtime_path: autorl.runtime.agentm.AgentMRuntime
-reward_strategy_path: autorl.rewards.rca.RCABaselineRewardStrategy
-tool_gateway_mode: local
-tool_gateway_base_url: null
-env_gateway_mode: none
-env_gateway_base_url: null
-trace_dir: .runs/agentm-rca-smoke/trajectories
+econfig:
+  scenario: rca
+  model: default
+  dataset_root: ${oc.env:AGENTM_RCA_DATASET_ROOT,""}
+  max_turns: 128
+  timeout: 1800.0
 
 cluster:
   n_nodes: 1
@@ -43,7 +38,7 @@ rollout:
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
   dump_to_file: true
-  openai:
+  agent:
     mode: inline
     export_style: individual
     turn_discount: 1.0
@@ -85,7 +80,11 @@ actor:
   ppo_n_minibatches: 1
   recompute_logprob: true
   use_decoupled_loss: true
-  behave_imp_weight_cap: 5.0
+  rejection_sampling:
+    level: token
+    action: mask
+    metric: ratio
+    upper: 5.0
   adv_norm:
     mean_level: batch
     std_level: batch
@@ -125,8 +124,8 @@ sglang:
 
 # RL data — directly consumes AgentM's processed RCA dataset. Each
 # row carries {id/source, question, ground_truth, fault_type,
-# datapack_name} and the RCATaskAdapter resolves data_dir by joining
-# AGENTM_RCA_DATASET_ROOT (env var) with datapack_name. Default points
+# datapack_name}; AgentMWorkflow resolves data_dir by joining
+# econfig.dataset_root with datapack_name. Default points
 # at the canonical workspace dataset; override with `-p
 # train_dataset.path=...` when pointing at a different jsonl.
 train_dataset:
@@ -184,15 +183,3 @@ perf_tracer:
   enabled: false
   session_tracer:
     enabled: false
-
-train_manifest_path: null
-valid_manifest_path: null
-train_dataset_revision: null
-valid_dataset_revision: null
-max_llm_calls_per_run: 8
-max_tokens_per_trajectory: 4096
-max_tokens_per_turn: 1024
-judge_engine_addr: null
-infer_max_items: 1
-allow_train_fallback_for_eval: false
-allow_train_fallback_for_infer: false

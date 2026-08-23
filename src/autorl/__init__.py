@@ -1,15 +1,3 @@
-"""autorl package."""
+"""Thin AReaL integration for training the AgentM RCA agent."""
 
-__all__ = [
-    "agents",
-    "contracts",
-    "data",
-    "experiments",
-    "gateways",
-    "rewards",
-    "runtime",
-    "tasks",
-    "tool_env",
-    "workflows",
-    "observability",
-]
+__all__ = ["agent", "data", "train", "train_sft", "verifier"]

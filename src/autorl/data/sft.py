@@ -69,7 +69,7 @@ def build_sft_dataset_from_manifest(
             if max_length is None or len(row["input_ids"]) <= max_length:
                 rows.append(row)
     if not rows:
-        raise ValueError(
+        raise TypeError(
             f"SFT manifest produced no usable rows (max_length={max_length}): {manifest_path}"
         )
     return Dataset.from_list(rows)
@@ -123,7 +123,7 @@ def _convert_sample(sample: Mapping[str, Any], *, tokenizer: Any) -> dict[str, A
     if not isinstance(input_payload, Mapping) or not isinstance(
         target_payload, Mapping
     ):
-        raise ValueError(
+        raise TypeError(
             "SFT row must carry 'input' and 'target' objects (llmharness/distill shape)"
         )
 
@@ -355,7 +355,7 @@ def _apply_chat_template_text(
         add_generation_prompt=add_generation_prompt,
     )
     if not isinstance(text, str):
-        raise ValueError("tokenizer chat template did not return text")
+        raise TypeError("tokenizer chat template did not return text")
     return text
 
 

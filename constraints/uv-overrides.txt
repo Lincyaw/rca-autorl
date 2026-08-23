@@ -1,3 +1,0 @@
-openai>=2.8.0
-soundfile>=0.12.1,<0.13.0
-nvidia-cudnn-cu12==9.16.0.29; sys_platform == "linux" and platform_machine == "x86_64"

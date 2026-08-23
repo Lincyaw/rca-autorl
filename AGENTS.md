@@ -1,21 +1,21 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/autorl/` contains the first-party scaffold. Keep schema and interfaces in `contracts/`, runtime wiring in `runtime/`, task adapters in `tasks/`, tool and environment boundaries in `gateways/` and `tool_env/`, and runnable entrypoints in `experiments/agent_workflow/`. Training configs live in `configs/train/`, helper scripts in `scripts/`, and upstream AReaL code in `third_party/AReaL/`.
+`src/autorl/agent.py` is the direct AReaL workflow around AgentM, `verifier.py` owns RCA reward computation, and `train.py` / `train_sft.py` are the runnable RL and SFT entrypoints. SFT tokenization helpers live in `src/autorl/data/`. Training configs live in `configs/`, helper scripts in `scripts/`, and upstream AReaL code in `third_party/AReaL/`.
 
 ## Build, Test, and Development Commands
 - `git submodule update --init --recursive` fetches the AReaL submodule.
 - `uv sync` installs the project and editable local dependencies into `.venv/`.
 - `./scripts/run_smoke.sh` runs the smoke training config with the repo venv on `PATH`.
-- `PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.experiments.agent_workflow.train --config configs/train/base.yaml` runs the baseline train path.
+- `PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.train --config configs/train/agentm_rca_smoke.yaml` runs the RCA RL path.
 - `uv run ruff check src` lint-checks first-party Python code.
 Rely on `third_party/AReaL/pyproject.toml` for shared runtime packages; avoid re-pinning AReaL-owned deps in the root project unless this repo adds a truly new requirement.
 
 ## Coding Style & Naming Conventions
-Use Python 3.12+ conventions: 4-space indentation, explicit type hints, and short, interface-first modules. Follow existing naming: `snake_case` for modules/functions, `PascalCase` for classes, and lowercase YAML config names such as `smoke.yaml`. Add new behavior by extending task or runtime modules instead of branching the shared workflow when possible.
+Use Python 3.12+ conventions: 4-space indentation, explicit type hints, and short modules. Keep the integration shaped like AReaL's SWE example: the external agent owns its loop and tools, while this repository only loads data, invokes the agent, computes reward, and launches training.
 
 ## Testing Guidelines
-There is no first-party `tests/` directory yet. Validate changes with the smallest runnable path, usually `./scripts/run_smoke.sh` or a targeted `python3 -m autorl.experiments.agent_workflow.{train,eval,infer}` command. If tests are explicitly requested, place them under `tests/` using `test_<module>.py` naming and keep coverage focused on changed contracts, adapters, or loaders.
+Run `python -m unittest discover -s tests` for unit tests and `./scripts/run_smoke.sh` for an end-to-end GPU smoke run. Keep tests focused on the workflow boundary, dataset loading, verifier, and SFT masking.
 
 ## Commit & Pull Request Guidelines
 The repository has no commit history yet, so use intent-first, imperative commit subjects. For repo-managed commits, follow the workspace Lore format with trailers such as `Constraint:`, `Rejected:`, `Confidence:`, and `Tested:`. Pull requests should explain why the change is needed, list touched configs or modules, note any submodule or dataset assumptions, and include the exact validation command or smoke-log snippet.

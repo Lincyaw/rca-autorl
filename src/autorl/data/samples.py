@@ -8,7 +8,7 @@ from typing import Any
 
 def _validate_sample(sample: Mapping[str, Any], *, index: int) -> dict[str, Any]:
     if not isinstance(sample, Mapping):
-        raise ValueError(f"manifest sample #{index} must be a JSON object")
+        raise TypeError(f"manifest sample #{index} must be a JSON object")
     return dict(sample)
 
 

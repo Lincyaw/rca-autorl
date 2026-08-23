@@ -17,7 +17,7 @@ See `AGENTS.md` for detailed coding style, testing, and commit guidelines — th
 paper/
   ideas/             — research idea 家族（v0 母 idea + v1 子 hypothesis）
   (later)            — 后续会有 sections/、figures/、experiments/ 等
-src/autorl/          — RL 训练框架代码（contracts / runtime / tasks / gateways / rewards）
+src/autorl/          — AgentM workflow、RCA verifier 与 AReaL 训练入口
 experiments/         — 实验配置、运行脚本、结果记录
 third_party/         — AReaL、agentm 等子模块
 ```
@@ -37,7 +37,7 @@ third_party/         — AReaL、agentm 等子模块
 
 - **新 idea / hypothesis**：先在 `paper/ideas/` 加文档，至少有 motivation + setting + modeling approach。validation 字段可后补
 - **新实验**：从某个 v1 idea 派生，进 `experiments/plans/`，测得的指标回写到 idea 文档的 success criteria
-- **代码改动**：遵循 `AGENTS.md` 的 code style；新 agent 的接口约定在 `src/autorl/contracts/`
+- **代码改动**：遵循 `AGENTS.md` 的 code style；每种 agent 使用直接的 AReaL workflow，不再建设仓库内通用框架
 - **论文写作**：进入到产出阶段后用 `paper/sections/` + LaTeX 工程化（晚期再启动）
 
 ## North-star targets（按研究阶段）
@@ -46,7 +46,7 @@ third_party/         — AReaL、agentm 等子模块
 
 ### Scaffold（始终激活）
 1. **Pipeline health** — lint clean + core imports pass (`python3 -m ruff check src`)
-2. **Scaffold extensibility** — 新 agent = TaskAdapter + AgentRuntime + RewardStrategy + config，零 workflow 改动
+2. **Integration simplicity** — Agent loop 留在 AgentM；本仓库仅负责 data、workflow、verifier 与 trainer wiring
 
 ### Phase 1 — RCA baseline
 3. **RCA F1** > 0.6 on RCABench eval

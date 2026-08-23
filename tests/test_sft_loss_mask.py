@@ -47,8 +47,7 @@ src_path = Path(__file__).resolve().parents[1] / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from autorl.data.sft import _convert_sample  # noqa: E402
-
+from autorl.data.sft import _convert_sample
 
 _QWEN3_MODEL_ID = "Qwen/Qwen3-4B-Thinking-2507"
 
@@ -59,8 +58,8 @@ def _load_qwen3_tokenizer():  # type: ignore[no-untyped-def]
     except ImportError as exc:  # pragma: no cover - environment guard
         raise unittest.SkipTest(f"transformers not installed: {exc}") from None
     try:
-        return AutoTokenizer.from_pretrained(_QWEN3_MODEL_ID)
-    except Exception as exc:  # pragma: no cover - offline / no creds
+        return AutoTokenizer.from_pretrained(_QWEN3_MODEL_ID, local_files_only=True)
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - optional cache
         raise unittest.SkipTest(
             f"cannot load {_QWEN3_MODEL_ID}: {exc}"
         ) from None

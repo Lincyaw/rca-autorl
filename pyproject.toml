@@ -6,13 +6,15 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "areal[sglang]",
-    "agentm",
-    "llmharness",
+    "agentm[eval]",
 ]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = ["ruff>=0.12"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -23,7 +25,6 @@ where = ["src"]
 [tool.uv.sources]
 areal = { path = "third_party/AReaL", editable = true }
 agentm = { path = "../AgentM", editable = true }
-llmharness = { path = "../AgentM/contrib/extensions/llmharness", editable = true }
 torch = { index = "pytorch-cu129" }
 torchaudio = { index = "pytorch-cu129" }
 torchvision = { index = "pytorch-cu129" }
@@ -31,6 +32,9 @@ torchvision = { index = "pytorch-cu129" }
 [tool.uv]
 index-strategy = "unsafe-best-match"
 override-dependencies = [
+    # AgentM's RCA scenario requires >=3.4.2; AReaL's 3.3 pin is not used by
+    # this thin workflow and would otherwise make the editable deps unsatisfiable.
+    "networkx>=3.4.2",
     "openai>=2.8.0",
     "soundfile>=0.12.1,<0.13.0",
     "torchao==0.15.0",
