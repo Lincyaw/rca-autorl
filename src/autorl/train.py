@@ -12,6 +12,8 @@ from areal import PPOTrainer
 from areal.api.cli_args import PPOConfig, load_expr_config
 from datasets import Dataset
 
+from autorl.algorithm import RCARewardConfig, validate_areal_v2_rloo
+
 
 @dataclass
 class AgentMConfig:
@@ -20,6 +22,7 @@ class AgentMConfig:
     dataset_root: str = ""
     max_turns: int = 128
     timeout: float = 1800.0
+    reward: RCARewardConfig = field(default_factory=RCARewardConfig)
 
 
 @dataclass
@@ -46,6 +49,7 @@ def load_rca_dataset(path: str) -> Dataset:
 
 def main(args: list[str]) -> None:
     config, _ = load_expr_config(args, RCAPPOConfig)
+    validate_areal_v2_rloo(config)
     train_dataset = load_rca_dataset(config.train_dataset.path)
     valid_dataset = (
         load_rca_dataset(config.valid_dataset.path) if config.valid_dataset is not None else None
@@ -62,6 +66,7 @@ def main(args: list[str]) -> None:
             workflow_kwargs=workflow_kwargs,
             eval_workflow="autorl.agent.AgentMWorkflow" if valid_dataset is not None else None,
             eval_workflow_kwargs=workflow_kwargs,
+            dynamic_filter_fn="autorl.algorithm.keep_informative_group",
         )
 
 

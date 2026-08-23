@@ -35,6 +35,7 @@ class AgentMWorkflowTest(unittest.IsolatedAsyncioTestCase):
                 return SimpleNamespace(
                     response=('{"root_causes":[{"service":"mysql","fault_kind":"cpu_stress"}]}'),
                     metadata={"submit_final_report_seen": True},
+                    trajectory=SimpleNamespace(agent_trajectories=[]),
                 )
 
         package = ModuleType("rca_eval")
@@ -56,7 +57,7 @@ class AgentMWorkflowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider_name, "agentm.extensions.builtin.llm_openai")
         self.assertEqual(provider_config["base_url"], "http://rollout")
         self.assertEqual(provider_config["api_key"], "secret")
-        self.assertEqual(reward["reward"], 1.0)
+        self.assertEqual(reward, 1.0)
 
 
 if __name__ == "__main__":

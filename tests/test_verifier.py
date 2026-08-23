@@ -37,7 +37,7 @@ class VerifyRcaTest(unittest.TestCase):
                 data_dir=Path(directory),
                 has_submission=False,
             )
-        self.assertEqual(metrics["reward"], 0.0)
+        self.assertEqual(metrics["reward"], -1.0)
         self.assertEqual(metrics["has_submission"], 0.0)
 
 

@@ -5,7 +5,7 @@ description = "Minimal AReaL-based agent training demo."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "areal[sglang]",
+    "areal[sglang]>=2.0.0,<3.0.0",
     "agentm[eval]",
 ]
 
