@@ -22,6 +22,7 @@ dist/
 # Local env and secrets
 .env
 .env.*
+.local/
 
 # Runtime artifacts
 .runs/
