@@ -14,20 +14,6 @@ econfig:
   dataset_root: ${oc.env:AGENTM_RCA_DATASET_ROOT,""}
   max_turns: 128
   timeout: 1800.0
-  reward:
-    cause_weight: 1.0
-    attribution_weight: 0.5
-    violation_weight: 1.0
-    correct_cause_reward: 1.0
-    incorrect_cause_penalty: 1.0
-    missed_diagnosis_penalty: 1.0
-    tool_call_cost: 0.01
-    token_cost: 0.0
-    elapsed_second_cost: 0.0
-    redundant_action_cost: 0.01
-    invalid_action_cost: 0.05
-    declaration_cost: 0.001
-
 cluster:
   n_nodes: 1
   n_gpus_per_node: 1

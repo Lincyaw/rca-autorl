@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import time
-from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Unpack, cast
 
@@ -18,25 +15,20 @@ from agentm import (
     ScenarioSpec,
     load_scenario_manifest,
 )
-from agentm.core.abi import Turn
-from areal.infra import workflow_context
-from areal.utils import logging, stats_tracker
+from areal.utils import logging
 
-from autorl.algorithm import RCARewardConfig
 from autorl.interfaces import (
     AgentMWorkflowConfig,
     AReaLAgentWorkflow,
     AReaLRunOptions,
-    JsonValue,
     RCASample,
 )
-from autorl.verifier import verify_rca
 
 logger = logging.getLogger("AgentM-RCA")
 
 
 class AgentMWorkflow(AReaLAgentWorkflow):
-    """Run one RCA case with AgentM and return its verifier reward."""
+    """Run one RCA case with AgentM and return the placeholder reward."""
 
     def __init__(self, econfig: AgentMWorkflowConfig | None = None) -> None:
         config = econfig or {}
@@ -46,10 +38,6 @@ class AgentMWorkflow(AReaLAgentWorkflow):
         self.timeout = float(config.get("timeout") or 1800.0)
         self.dataset_root = str(
             config.get("dataset_root") or os.getenv("AGENTM_RCA_DATASET_ROOT") or ""
-        )
-        reward_config = config.get("reward")
-        self.reward_config = RCARewardConfig.from_mapping(
-            reward_config if isinstance(reward_config, Mapping) else None
         )
 
     async def run(
@@ -86,40 +74,17 @@ class AgentMWorkflow(AReaLAgentWorkflow):
                 ),
             )
         )
-        started_at = time.monotonic()
         try:
             await asyncio.wait_for(session.run(incident), timeout=self.timeout)
             final_result = session.final_result()
-            turns = session.get_turns()
         finally:
             await session.shutdown()
-        elapsed_seconds = time.monotonic() - started_at
-        response = final_result.text if final_result is not None else ""
-        prediction = _parse_prediction(response)
         has_submission = bool(
             final_result is not None and final_result.reason == "structured_output:submitted"
         )
-        usage = _session_usage(turns)
-        metrics = verify_rca(
-            data,
-            prediction,
-            data_dir=data_dir,
-            has_submission=has_submission,
-            reward_config=self.reward_config,
-            tool_calls=usage["tool_calls"],
-            tokens=usage["tokens"],
-            elapsed_seconds=elapsed_seconds,
-            invalid_actions=usage["invalid_actions"],
-        )
         case_id = data.get("id") or data.get("source") or data.get("datapack_name")
-        logger.info(
-            f"Finished RCA episode: case={case_id} "
-            f"reward={metrics['reward']:.4f} submitted={has_submission}"
-        )
-        _log_metrics(metrics)
-        # AReaL v2 interprets a dict as {completion_id: reward}; diagnostic
-        # metrics must be logged separately and the workflow must return a scalar.
-        return metrics["reward"]
+        logger.info(f"Finished RCA episode: case={case_id} submitted={has_submission}")
+        return 0.0
 
 
 def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:
@@ -145,41 +110,9 @@ def _required_text(sample: RCASample, keys: tuple[str, ...]) -> str:
     raise ValueError(f"RCA sample needs one of: {', '.join(keys)}")
 
 
-def _parse_prediction(response: str | None) -> JsonValue:
-    if not response:
-        return {}
-    try:
-        return cast(JsonValue, json.loads(response))
-    except json.JSONDecodeError:
-        return response
-
-
 def _load_scenario(name: str) -> ScenarioSpec:
     manifest = Path(__file__).parents[2] / "contrib" / "scenarios" / name / "manifest.yaml"
     return load_scenario_manifest(manifest, requested_name=name)
-
-
-def _session_usage(turns: Sequence[Turn]) -> dict[str, int]:
-    tool_calls = 0
-    tokens = 0
-    invalid_actions = 0
-    for turn in turns:
-        response = getattr(turn, "response", None)
-        usage = getattr(response, "usage", None)
-        if usage is not None:
-            tokens += int(usage.input_tokens) + int(usage.output_tokens)
-        records = getattr(turn, "tool_results", ())
-        tool_calls += len(records)
-        invalid_actions += sum(bool(record.result.is_error) for record in records)
-    return {
-        "tool_calls": tool_calls,
-        "tokens": tokens,
-        "invalid_actions": invalid_actions,
-    }
-
-
-def _log_metrics(metrics: Mapping[str, float]) -> None:
-    stats_tracker.get(workflow_context.stat_scope()).scalar(**metrics)
 
 
 __all__ = ["AgentMWorkflow", "resolve_data_dir"]

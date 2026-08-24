@@ -12,7 +12,6 @@ resolution-markers = [
 
 [manifest]
 overrides = [
-    { name = "networkx", specifier = ">=3.4.2" },
     { name = "nvidia-cudnn-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "==9.16.0.29" },
     { name = "openai", specifier = ">=2.8.0" },
     { name = "soundfile", specifier = ">=0.12.1,<0.13.0" },
@@ -1338,15 +1337,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/62/f2/aa27c7f98db5b064883dadcc5283947e81e034de42e22a33675878d98b54/fonttools-4.63.0-cp312-cp312-win32.whl", hash = "sha256:af2fd1664d00a397d75f806985ddb36282091c2131a73a6485c23b4a34722263", size = 2292575, upload-time = "2026-05-14T12:03:27.496Z" },
     { url = "https://files.pythonhosted.org/packages/87/36/cccb9bc2a6ab63d1b2980374f0dca72ce95ae267c9b4cfe77455bb70d0d4/fonttools-4.63.0-cp312-cp312-win_amd64.whl", hash = "sha256:59ac449f8cca9b4ffa08d2e7bbadad87ce710d69d1eda5c3c1ce579baa987272", size = 2343211, upload-time = "2026-05-14T12:03:30.057Z" },
     { url = "https://files.pythonhosted.org/packages/2c/47/c99d5268f354002ce80f8d029cd9d7d872969da1de8b93d32de4dc56d6f4/fonttools-4.63.0-py3-none-any.whl", hash = "sha256:445af2eab030a16b9171ea8bdda7ebf7d96bda2df88ee182a464252f6e05e20d", size = 1164562, upload-time = "2026-05-14T12:04:29.092Z" },
-]
-
-[[package]]
-name = "fpg"
-version = "0.1.0"
-source = { git = "https://github.com/Lincyaw/fpg-convention.git?rev=1be954208b6bb4ffbdd6bd9db0c0357d5d415990#1be954208b6bb4ffbdd6bd9db0c0357d5d415990" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "pyyaml" },
 ]
 
 [[package]]
@@ -2677,11 +2667,11 @@ wheels = [
 
 [[package]]
 name = "networkx"
-version = "3.6.1"
+version = "3.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/e6/b164f94c869d6b2c605b5128b7b0cfe912795a87fc90e78533920001f3ec/networkx-3.3.tar.gz", hash = "sha256:0c127d8b2f4865f59ae9cb8aafcd60b5c70f3241ebd66f7defad7c4ab90126c9", size = 2126579, upload-time = "2024-04-06T12:59:47.137Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl", hash = "sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762", size = 2068504, upload-time = "2025-12-08T17:02:38.159Z" },
+    { url = "https://files.pythonhosted.org/packages/38/e9/5f72929373e1a0e8d142a130f3f97e6ff920070f87f91c4e13e40e0fba5a/networkx-3.3-py3-none-any.whl", hash = "sha256:28575580c6ebdaf4505b22c6256a2b9de86b316dc63ba9e93abde3d78dfdbcf2", size = 1702396, upload-time = "2024-04-06T12:59:44.283Z" },
 ]
 
 [[package]]
@@ -4152,7 +4142,6 @@ source = { editable = "." }
 dependencies = [
     { name = "agentm" },
     { name = "areal", extra = ["sglang"] },
-    { name = "fpg" },
 ]
 
 [package.dev-dependencies]
@@ -4166,7 +4155,6 @@ dev = [
 requires-dist = [
     { name = "agentm" },
     { name = "areal", extras = ["sglang"], editable = "third_party/AReaL" },
-    { name = "fpg", git = "https://github.com/Lincyaw/fpg-convention.git?rev=1be954208b6bb4ffbdd6bd9db0c0357d5d415990" },
 ]
 
 [package.metadata.requires-dev]

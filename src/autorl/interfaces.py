@@ -38,7 +38,6 @@ class AgentMWorkflowConfig(TypedDict, total=False):
     max_turns: int
     timeout: float
     dataset_root: str
-    reward: dict[str, float]
 
 
 class RewardNormConfig(Protocol):

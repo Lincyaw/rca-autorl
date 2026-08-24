@@ -12,7 +12,7 @@ AReaL PPO/GRPO trainer
         ▼
 AgentMWorkflow ──▶ AgentSession SDK ──▶ RCA tools and investigation
         ▲                              │
-        └──────── verifier reward ◀────┘
+        └──────── placeholder 0.0 reward ◀────┘
 ```
 
 ## What lives here
@@ -20,9 +20,7 @@ AgentMWorkflow ──▶ AgentSession SDK ──▶ RCA tools and investigation
 - `src/autorl/agent.py`: direct AReaL workflow around AgentM's public `AgentSession` SDK.
 - `contrib/scenarios/rca/manifest.yaml`: AgentM RCA scenario composition, prompt,
   read-only tool policy, loop budget, and structured FPG output contract.
-- `src/autorl/algorithm.py`: reward scalarization, dynamic group filtering, and
-  AReaL v2 RLOO configuration validation.
-- `src/autorl/verifier.py`: converts canonical FPG evaluation into reward signals.
+- `src/autorl/algorithm.py`: validates the AReaL v2 RLOO configuration.
 - `src/autorl/train.py`: JSONL loading plus `PPOTrainer` launch.
 - `src/autorl/train_sft.py`: `SFTTrainer` launch for distilled AgentM trajectories.
 - `src/autorl/data/sft.py`: chat-template rendering and assistant-only loss masks.
@@ -63,32 +61,9 @@ For every rollout, AReaL passes a proxy URL and API key to `AgentMWorkflow`. The
 workflow builds an explicit AgentM OpenAI provider from those values, runs
 an `AgentSession`, and returns one scalar reward in the format expected by AReaL v2.
 
-When a case contains `causal_graph_verified.json`, reward comes from
-`fpg.compare_model_to_ground_truth`. The reward follows the Notes specification:
-
-```text
-terminal = cause_weight × (+correct_reward or -incorrect_penalty)
-         + attribution_weight × attribution_score
-         - violation_weight × violation_count
-return   = terminal - investigation_cost
-```
-
-The default weights satisfy the reward-safety constraint
-`cause_weight × incorrect_penalty > attribution_weight`. AReaL v2 performs
-trajectory-level RLOO using group leave-one-out reward centering, no standard-deviation
-normalization, and undiscounted `gamma=lambda=1`. Tied non-positive total-return groups
-are rejected and refilled; tied successful and contrastive groups are retained.
-
-The current FPG verifier uses exact root-subject matching for the binary cause score and
-the mean of subject recall and soft subject-edge recall as the attribution proxy. The
-algorithm module also defines the exact anomaly-account formula, including false-dismissal
-penalties; wiring that path requires the dataset generator to emit verified per-anomaly
-outcomes. Tool-call cost is measured today. Token, redundancy, invalid-action,
-declaration, and violation costs activate when AgentM exposes their counts in result
-metadata.
-
-Selective same-state forking remains out of scope until AgentM exposes exact
-snapshot-and-resume at the selected pre-action state.
+Reward is temporarily fixed at `0.0`. The verifier and reward design will be added later;
+until then the training entry exercises rollout plumbing but produces no policy-gradient
+signal.
 
 ## SFT
 
