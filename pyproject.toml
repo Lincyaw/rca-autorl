@@ -6,7 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "areal[sglang]>=2.0.0,<3.0.0",
-    "agentm[eval]",
+    "agentm",
+    "fpg>=0.1.0",
 ]
 
 [build-system]
@@ -28,7 +29,7 @@ where = ["src"]
 
 [tool.uv.sources]
 areal = { path = "third_party/AReaL", editable = true }
-agentm = { git = "https://github.com/Lincyaw/AgentM.git", rev = "7ebc5ef923550a699e628017a0d37630eec76007" }
+fpg = { git = "https://github.com/Lincyaw/fpg-convention.git", rev = "1be954208b6bb4ffbdd6bd9db0c0357d5d415990" }
 torch = { index = "pytorch-cu129" }
 torchaudio = { index = "pytorch-cu129" }
 torchvision = { index = "pytorch-cu129" }
@@ -36,8 +37,8 @@ torchvision = { index = "pytorch-cu129" }
 [tool.uv]
 index-strategy = "unsafe-best-match"
 override-dependencies = [
-    # AgentM's RCA scenario requires >=3.4.2; AReaL's 3.3 pin is not used by
-    # this thin workflow and would otherwise make the editable deps unsatisfiable.
+    # The FPG evaluator requires >=3.4.2; AReaL's 3.3 pin would otherwise make
+    # the combined SDK environment unsatisfiable.
     "networkx>=3.4.2",
     "openai>=2.8.0",
     "soundfile>=0.12.1,<0.13.0",
@@ -72,9 +73,9 @@ warn_unreachable = true
 
 [[tool.mypy.overrides]]
 module = [
+    "agentm.*",
     "areal.*",
     "datasets.*",
     "fpg.*",
-    "rca_eval.*",
 ]
 ignore_missing_imports = true

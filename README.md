@@ -10,14 +10,16 @@ agent to AReaL's rollout proxy and trainer.
 AReaL PPO/GRPO trainer
         │ OpenAI-compatible rollout proxy
         ▼
-AgentMWorkflow ──▶ AgentMAgent ──▶ RCA tools and investigation
+AgentMWorkflow ──▶ AgentSession SDK ──▶ RCA tools and investigation
         ▲                              │
         └──────── verifier reward ◀────┘
 ```
 
 ## What lives here
 
-- `src/autorl/agent.py`: direct AReaL workflow around `rca_eval.AgentMAgent`.
+- `src/autorl/agent.py`: direct AReaL workflow around AgentM's public `AgentSession` SDK.
+- `contrib/scenarios/rca/manifest.yaml`: AgentM RCA scenario composition, prompt,
+  read-only tool policy, loop budget, and structured FPG output contract.
 - `src/autorl/algorithm.py`: reward scalarization, dynamic group filtering, and
   AReaL v2 RLOO configuration validation.
 - `src/autorl/verifier.py`: converts canonical FPG evaluation into reward signals.
@@ -40,10 +42,10 @@ git submodule update --init --recursive
 UV_HTTP_TIMEOUT=300 uv sync --python 3.12
 ```
 
-`agentm[eval]` is consumed as a pinned SDK package. Its RCA scenario supplies the
-`rca_eval.AgentMAgent` adapter and FPG grader used by rollout workers. It is not
-overridden by a sibling checkout, so local development, CI, and the training host
-resolve the same SDK contract.
+`agentm` is consumed from a pinned SDK revision and is not overridden by a sibling
+checkout, so local development, CI, and the training host resolve the same public API.
+The workflow passes `scenario="rca"`; AgentM resolves the repository-owned scenario
+manifest, including its structured FPG terminal submission.
 
 ## RL
 
@@ -59,7 +61,7 @@ export AGENTM_RCA_DATASET_ROOT=/path/to/rca
 
 For every rollout, AReaL passes a proxy URL and API key to `AgentMWorkflow`. The
 workflow builds an explicit AgentM OpenAI provider from those values, runs
-`AgentMAgent`, and returns one scalar reward in the format expected by AReaL v2.
+an `AgentSession`, and returns one scalar reward in the format expected by AReaL v2.
 
 When a case contains `causal_graph_verified.json`, reward comes from
 `fpg.compare_model_to_ground_truth`. The reward follows the Notes specification:

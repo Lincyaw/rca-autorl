@@ -12,7 +12,7 @@ from typing import Any
 
 try:
     from areal.utils import logging
-except ImportError:  # Keep data/verifier helpers importable without AReaL installed.
+except ImportError:  # Keep reward helpers importable in the dev-only environment.
     import logging
 
 from autorl.algorithm import RCARewardConfig
@@ -56,36 +56,48 @@ class AgentMWorkflow:
             },
         )
 
-        # AgentM's public RCA adapter owns the SDK session, tools and trajectory.
-        from rca_eval.agent import AgentMAgent
+        from agentm import (
+            AgentSession,
+            AgentSessionConfig,
+            LoopConfig,
+        )
 
-        agent = AgentMAgent(
-            scenario=self.scenario,
-            provider_tuple=provider,
-            max_turns=self.max_turns,
+        session = await AgentSession.create(
+            AgentSessionConfig(
+                cwd=data_dir,
+                scenario=self.scenario,
+                scenario_loader=_load_scenario,
+                provider=provider,
+                loop_config=LoopConfig(
+                    max_turns=self.max_turns,
+                    max_tool_calls=self.max_turns * 20,
+                ),
+            )
         )
         started_at = time.monotonic()
-        result = await asyncio.wait_for(
-            agent.run(incident=incident, data_dir=data_dir),
-            timeout=self.timeout,
-        )
+        try:
+            await asyncio.wait_for(session.run(incident), timeout=self.timeout)
+            final_result = session.final_result()
+            turns = session.get_turns()
+        finally:
+            await session.shutdown()
         elapsed_seconds = time.monotonic() - started_at
-        prediction = _parse_prediction(result.response)
-        metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
-        has_submission = bool(metadata.get("submit_final_report_seen"))
+        response = final_result.text if final_result is not None else ""
+        prediction = _parse_prediction(response)
+        has_submission = bool(
+            final_result is not None and final_result.reason == "structured_output:submitted"
+        )
+        usage = _session_usage(turns)
         metrics = verify_rca(
             data,
             prediction,
             data_dir=data_dir,
             has_submission=has_submission,
             reward_config=self.reward_config,
-            tool_calls=_count_tool_calls(result.trajectory),
-            tokens=_metadata_int(metadata, "total_tokens"),
+            tool_calls=usage["tool_calls"],
+            tokens=usage["tokens"],
             elapsed_seconds=elapsed_seconds,
-            redundant_actions=_metadata_int(metadata, "redundant_actions"),
-            invalid_actions=_metadata_int(metadata, "invalid_actions"),
-            declared_objects=_metadata_int(metadata, "declared_objects"),
-            violation_count=_metadata_int(metadata, "violation_count"),
+            invalid_actions=usage["invalid_actions"],
         )
         case_id = data.get("id") or data.get("source") or data.get("datapack_name")
         logger.info(
@@ -130,27 +142,30 @@ def _parse_prediction(response: str | None) -> Any:
         return response
 
 
-def _count_tool_calls(trajectory: Any) -> int:
-    if hasattr(trajectory, "model_dump"):
-        trajectory = trajectory.model_dump(mode="python")
-    if not isinstance(trajectory, Mapping):
-        return 0
-    count = 0
-    for agent_trajectory in trajectory.get("agent_trajectories") or []:
-        if not isinstance(agent_trajectory, Mapping):
-            continue
-        for turn in agent_trajectory.get("turns") or []:
-            if not isinstance(turn, Mapping):
-                continue
-            for message in turn.get("messages") or []:
-                if isinstance(message, Mapping):
-                    count += len(message.get("tool_calls") or [])
-    return count
+def _load_scenario(name: str) -> Any:
+    from agentm import load_scenario_manifest
+
+    manifest = Path(__file__).parents[2] / "contrib" / "scenarios" / name / "manifest.yaml"
+    return load_scenario_manifest(manifest, requested_name=name)
 
 
-def _metadata_int(metadata: Mapping[str, Any], key: str) -> int:
-    value = metadata.get(key, 0)
-    return int(value) if isinstance(value, int | float) else 0
+def _session_usage(turns: list[Any]) -> dict[str, int]:
+    tool_calls = 0
+    tokens = 0
+    invalid_actions = 0
+    for turn in turns:
+        response = getattr(turn, "response", None)
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            tokens += int(usage.input_tokens) + int(usage.output_tokens)
+        records = getattr(turn, "tool_results", ())
+        tool_calls += len(records)
+        invalid_actions += sum(bool(record.result.is_error) for record in records)
+    return {
+        "tool_calls": tool_calls,
+        "tokens": tokens,
+        "invalid_actions": invalid_actions,
+    }
 
 
 def _log_metrics(metrics: Mapping[str, float]) -> None:

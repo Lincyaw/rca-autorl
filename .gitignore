@@ -25,6 +25,7 @@ dist/
 .local/
 
 # Runtime artifacts
+.agentm/
 .runs/
 logs/
 outputs/
