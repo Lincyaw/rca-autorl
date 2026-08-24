@@ -18,8 +18,8 @@ AgentMWorkflow ──▶ AgentMAgent ──▶ RCA tools and investigation
 ## What lives here
 
 - `src/autorl/agent.py`: direct AReaL workflow around `rca_eval.AgentMAgent`.
-- `src/autorl/algorithm.py`: reward scalarization, RLOO/fork advantage definitions,
-  dynamic group filtering, and AReaL v2 configuration validation.
+- `src/autorl/algorithm.py`: reward scalarization, dynamic group filtering, and
+  AReaL v2 RLOO configuration validation.
 - `src/autorl/verifier.py`: converts canonical FPG evaluation into reward signals.
 - `src/autorl/train.py`: JSONL loading plus `PPOTrainer` launch.
 - `src/autorl/train_sft.py`: `SFTTrainer` launch for distilled AgentM trajectories.
@@ -85,8 +85,7 @@ outcomes. Tool-call cost is measured today. Token, redundancy, invalid-action,
 declaration, and violation costs activate when AgentM exposes their counts in result
 metadata.
 
-Selective same-state fork advantages are defined in `autorl.algorithm` for the next
-stage, but are not yet wired into rollout because AgentM must first expose exact
+Selective same-state forking remains out of scope until AgentM exposes exact
 snapshot-and-resume at the selected pre-action state.
 
 ## SFT

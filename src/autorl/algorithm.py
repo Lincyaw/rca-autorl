@@ -1,8 +1,8 @@
 """Core learning rules for evidence-grounded RCA policy optimization.
 
-The production trainer delegates tensor operations to AReaL v2. The pure-Python
-functions here define the algorithm's reward and advantage semantics, validate
-the equivalent AReaL configuration, and provide its dynamic group filter.
+The production trainer delegates advantage computation to AReaL v2. This module
+defines reward semantics, validates the required AReaL configuration, and
+provides the dynamic group filter used during rollout collection.
 """
 
 from __future__ import annotations
@@ -128,25 +128,6 @@ def anomaly_attribution_score(
     return (correct - missed_diagnosis_penalty * false_dismissals) / total
 
 
-def rloo_advantages(returns: Sequence[float]) -> list[float]:
-    """Return leave-one-out advantages without standard-deviation scaling."""
-    if len(returns) < 2:
-        raise ValueError("RLOO requires at least two trajectories per task")
-    total = math.fsum(returns)
-    denominator = len(returns) - 1
-    return [value - (total - value) / denominator for value in returns]
-
-
-def fork_advantages(continuation_returns: Sequence[Sequence[float]]) -> list[float]:
-    """Compute sibling LOO advantages from mean continuation returns."""
-    if len(continuation_returns) < 2:
-        raise ValueError("fork advantage requires at least two sibling actions")
-    if any(not returns for returns in continuation_returns):
-        raise ValueError("every sibling action needs at least one continuation")
-    action_values = [math.fsum(returns) / len(returns) for returns in continuation_returns]
-    return rloo_advantages(action_values)
-
-
 def keep_informative_group(trajectory: Mapping[str, Any]) -> bool:
     """Drop tied non-positive groups; keep contrastive and successful groups.
 
@@ -211,8 +192,6 @@ __all__ = [
     "RCARewardConfig",
     "anomaly_attribution_score",
     "compute_episode_reward",
-    "fork_advantages",
     "keep_informative_group",
-    "rloo_advantages",
     "validate_areal_v2_rloo",
 ]

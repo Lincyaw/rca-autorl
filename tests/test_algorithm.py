@@ -7,9 +7,7 @@ from autorl.algorithm import (
     RCARewardConfig,
     anomaly_attribution_score,
     compute_episode_reward,
-    fork_advantages,
     keep_informative_group,
-    rloo_advantages,
 )
 
 
@@ -56,13 +54,7 @@ class RewardTest(unittest.TestCase):
             RCARewardConfig(attribution_weight=1.0)
 
 
-class AdvantageTest(unittest.TestCase):
-    def test_rloo_uses_other_rollouts_as_baseline(self) -> None:
-        self.assertEqual(rloo_advantages([1.0, 0.0, -1.0]), [1.5, 0.0, -1.5])
-
-    def test_fork_advantage_averages_continuations_before_rloo(self) -> None:
-        self.assertEqual(fork_advantages([[1.0, 3.0], [0.0, 0.0]]), [2.0, -2.0])
-
+class GroupFilterTest(unittest.TestCase):
     def test_dynamic_filter_drops_only_tied_failures(self) -> None:
         self.assertFalse(keep_informative_group({"rewards": [[-1.0], [-1.0]]}))
         self.assertTrue(keep_informative_group({"rewards": [[-1.0], [-0.5]]}))
