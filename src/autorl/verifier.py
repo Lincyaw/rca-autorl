@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from fpg import ModelRCAOutput, Scenario, compare_model_to_ground_truth
+
 from autorl.algorithm import EpisodeSignals, RCARewardConfig, compute_episode_reward
 
 
@@ -50,8 +52,6 @@ def verify_rca(
 
 def _fpg_signals(prediction: Any, graph_path: Path) -> tuple[bool, float]:
     try:
-        from fpg import ModelRCAOutput, Scenario, compare_model_to_ground_truth
-
         output = ModelRCAOutput.model_validate(prediction)
         scenario = Scenario.model_validate_json(graph_path.read_text(encoding="utf-8"))
         comparison = compare_model_to_ground_truth(output, scenario)

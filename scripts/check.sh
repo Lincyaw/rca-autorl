@@ -11,6 +11,9 @@ for tool in ruff mypy; do
   fi
 done
 
-.venv/bin/ruff check src tests
-.venv/bin/ruff format --check src tests
+paths=(src)
+[[ -d tests ]] && paths+=(tests)
+
+.venv/bin/ruff check "${paths[@]}"
+.venv/bin/ruff format --check "${paths[@]}"
 .venv/bin/mypy src

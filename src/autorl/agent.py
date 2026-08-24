@@ -10,10 +10,15 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-try:
-    from areal.utils import logging
-except ImportError:  # Keep reward helpers importable in the dev-only environment.
-    import logging
+from agentm import (
+    AgentSession,
+    AgentSessionConfig,
+    LoopConfig,
+    ScenarioSpec,
+    load_scenario_manifest,
+)
+from areal.infra import workflow_context
+from areal.utils import logging, stats_tracker
 
 from autorl.algorithm import RCARewardConfig
 from autorl.verifier import verify_rca
@@ -54,12 +59,6 @@ class AgentMWorkflow:
                 "base_url": str(base_url),
                 "api_key": api_key,
             },
-        )
-
-        from agentm import (
-            AgentSession,
-            AgentSessionConfig,
-            LoopConfig,
         )
 
         session = await AgentSession.create(
@@ -142,9 +141,7 @@ def _parse_prediction(response: str | None) -> Any:
         return response
 
 
-def _load_scenario(name: str) -> Any:
-    from agentm import load_scenario_manifest
-
+def _load_scenario(name: str) -> ScenarioSpec:
     manifest = Path(__file__).parents[2] / "contrib" / "scenarios" / name / "manifest.yaml"
     return load_scenario_manifest(manifest, requested_name=name)
 
@@ -169,11 +166,6 @@ def _session_usage(turns: list[Any]) -> dict[str, int]:
 
 
 def _log_metrics(metrics: Mapping[str, float]) -> None:
-    try:
-        from areal.infra import workflow_context
-        from areal.utils import stats_tracker
-    except ImportError:
-        return
     stats_tracker.get(workflow_context.stat_scope()).scalar(**metrics)
 
 
