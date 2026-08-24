@@ -10,7 +10,8 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
-from typing import Any
+
+from autorl.interfaces import AReaLRLOOConfig, TensorLike
 
 
 @dataclass(slots=True)
@@ -40,14 +41,19 @@ class RCARewardConfig:
             )
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> RCARewardConfig:
+    def from_mapping(cls, values: Mapping[str, object] | None) -> RCARewardConfig:
         if values is None:
             return cls()
         known = {item.name for item in fields(cls)}
         unknown = set(values) - known
         if unknown:
             raise ValueError(f"unknown reward setting(s): {sorted(unknown)}")
-        return cls(**{key: float(value) for key, value in values.items()})
+        parsed: dict[str, float] = {}
+        for key, value in values.items():
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise TypeError(f"reward setting {key!r} must be numeric")
+            parsed[key] = float(value)
+        return cls(**parsed)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +134,7 @@ def anomaly_attribution_score(
     return (correct - missed_diagnosis_penalty * false_dismissals) / total
 
 
-def keep_informative_group(trajectory: Mapping[str, Any]) -> bool:
+def keep_informative_group(trajectory: Mapping[str, object]) -> bool:
     """Drop tied non-positive groups; keep contrastive and successful groups.
 
     AReaL v2 calls this after grouped rollouts and refills rejected groups when
@@ -143,7 +149,7 @@ def keep_informative_group(trajectory: Mapping[str, Any]) -> bool:
     return returns[0] > 0.0
 
 
-def validate_areal_v2_rloo(config: Any) -> None:
+def validate_areal_v2_rloo(config: AReaLRLOOConfig) -> None:
     """Fail fast unless AReaL v2 is configured as broadcast RLOO."""
     group_size = int(config.gconfig.n_samples)
     reward_norm = config.actor.reward_norm
@@ -171,20 +177,26 @@ def validate_areal_v2_rloo(config: Any) -> None:
         raise ValueError("invalid RCA RLOO config: " + "; ".join(errors))
 
 
-def _sequence_returns(value: Any) -> list[float]:
+def _sequence_returns(value: object) -> list[float]:
     if value is None:
         return []
-    if hasattr(value, "detach"):
+    if isinstance(value, TensorLike):
         value = value.detach().cpu().tolist()
     if not isinstance(value, Sequence) or isinstance(value, str | bytes):
-        return [float(value)]
+        return [_as_float(value)]
     result: list[float] = []
     for item in value:
         if isinstance(item, Sequence) and not isinstance(item, str | bytes):
-            result.append(math.fsum(float(token_reward) for token_reward in item))
+            result.append(math.fsum(_as_float(token_reward) for token_reward in item))
         else:
-            result.append(float(item))
+            result.append(_as_float(item))
     return result
+
+
+def _as_float(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError(f"reward values must be numeric, got {type(value).__name__}")
+    return float(value)
 
 
 __all__ = [

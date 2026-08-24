@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from fpg import ModelRCAOutput, Scenario, compare_model_to_ground_truth
 
 from autorl.algorithm import EpisodeSignals, RCARewardConfig, compute_episode_reward
+from autorl.interfaces import JsonValue, RCASample
 
 
 def verify_rca(
-    sample: Mapping[str, Any],
-    prediction: Any,
+    sample: RCASample,
+    prediction: JsonValue,
     *,
     data_dir: str | Path,
     has_submission: bool,
@@ -50,7 +49,7 @@ def verify_rca(
     return compute_episode_reward(signals, reward_config or RCARewardConfig())
 
 
-def _fpg_signals(prediction: Any, graph_path: Path) -> tuple[bool, float]:
+def _fpg_signals(prediction: JsonValue, graph_path: Path) -> tuple[bool, float]:
     try:
         output = ModelRCAOutput.model_validate(prediction)
         scenario = Scenario.model_validate_json(graph_path.read_text(encoding="utf-8"))
@@ -66,7 +65,7 @@ def _fpg_signals(prediction: Any, graph_path: Path) -> tuple[bool, float]:
         return False, 0.0
 
 
-def _legacy_signals(sample: Mapping[str, Any], prediction: Any) -> tuple[bool, float]:
+def _legacy_signals(sample: RCASample, prediction: JsonValue) -> tuple[bool, float]:
     expected_services = sample.get("expected_services") or sample.get("ground_truth") or []
     if not isinstance(expected_services, list):
         expected_services = []
@@ -82,7 +81,7 @@ def _legacy_signals(sample: Mapping[str, Any], prediction: Any) -> tuple[bool, f
     return cause_correct, 0.0
 
 
-def _normalize(value: Any) -> str:
+def _normalize(value: object) -> str:
     text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", str(value or ""))
     return " ".join(text.lower().replace("_", " ").split())
 

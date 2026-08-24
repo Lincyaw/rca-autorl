@@ -6,30 +6,39 @@ import asyncio
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Unpack, cast
 
 from agentm import (
     AgentSession,
     AgentSessionConfig,
     LoopConfig,
+    ScenarioLoader,
     ScenarioSpec,
     load_scenario_manifest,
 )
+from agentm.core.abi import Turn
 from areal.infra import workflow_context
 from areal.utils import logging, stats_tracker
 
 from autorl.algorithm import RCARewardConfig
+from autorl.interfaces import (
+    AgentMWorkflowConfig,
+    AReaLAgentWorkflow,
+    AReaLRunOptions,
+    JsonValue,
+    RCASample,
+)
 from autorl.verifier import verify_rca
 
 logger = logging.getLogger("AgentM-RCA")
 
 
-class AgentMWorkflow:
+class AgentMWorkflow(AReaLAgentWorkflow):
     """Run one RCA case with AgentM and return its verifier reward."""
 
-    def __init__(self, econfig: dict[str, Any] | None = None) -> None:
+    def __init__(self, econfig: AgentMWorkflowConfig | None = None) -> None:
         config = econfig or {}
         self.scenario = str(config.get("scenario") or "rca")
         self.model = str(config.get("model") or "default")
@@ -43,7 +52,11 @@ class AgentMWorkflow:
             reward_config if isinstance(reward_config, Mapping) else None
         )
 
-    async def run(self, data: dict[str, Any], **extra_kwargs: Any) -> float:
+    async def run(
+        self,
+        data: RCASample,
+        **extra_kwargs: Unpack[AReaLRunOptions],
+    ) -> float:
         base_url = extra_kwargs.get("base_url")
         if not base_url:
             raise ValueError("AReaL did not provide a rollout proxy base_url")
@@ -65,7 +78,7 @@ class AgentMWorkflow:
             AgentSessionConfig(
                 cwd=data_dir,
                 scenario=self.scenario,
-                scenario_loader=_load_scenario,
+                scenario_loader=cast(ScenarioLoader, _load_scenario),
                 provider=provider,
                 loop_config=LoopConfig(
                     max_turns=self.max_turns,
@@ -109,7 +122,7 @@ class AgentMWorkflow:
         return metrics["reward"]
 
 
-def resolve_data_dir(sample: Mapping[str, Any], dataset_root: str = "") -> str:
+def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:
     for key in ("data_dir", "case_dir", "observability_dir"):
         value = sample.get(key)
         if value and str(value).strip():
@@ -124,7 +137,7 @@ def resolve_data_dir(sample: Mapping[str, Any], dataset_root: str = "") -> str:
     )
 
 
-def _required_text(sample: Mapping[str, Any], keys: tuple[str, ...]) -> str:
+def _required_text(sample: RCASample, keys: tuple[str, ...]) -> str:
     for key in keys:
         value = sample.get(key)
         if value and str(value).strip():
@@ -132,11 +145,11 @@ def _required_text(sample: Mapping[str, Any], keys: tuple[str, ...]) -> str:
     raise ValueError(f"RCA sample needs one of: {', '.join(keys)}")
 
 
-def _parse_prediction(response: str | None) -> Any:
+def _parse_prediction(response: str | None) -> JsonValue:
     if not response:
         return {}
     try:
-        return json.loads(response)
+        return cast(JsonValue, json.loads(response))
     except json.JSONDecodeError:
         return response
 
@@ -146,7 +159,7 @@ def _load_scenario(name: str) -> ScenarioSpec:
     return load_scenario_manifest(manifest, requested_name=name)
 
 
-def _session_usage(turns: list[Any]) -> dict[str, int]:
+def _session_usage(turns: Sequence[Turn]) -> dict[str, int]:
     tool_calls = 0
     tokens = 0
     invalid_actions = 0

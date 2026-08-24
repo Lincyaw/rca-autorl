@@ -37,18 +37,12 @@ torchvision = { index = "pytorch-cu129" }
 [tool.uv]
 index-strategy = "unsafe-best-match"
 override-dependencies = [
-    # The FPG evaluator requires >=3.4.2; AReaL's 3.3 pin would otherwise make
-    # the combined SDK environment unsatisfiable.
     "networkx>=3.4.2",
     "openai>=2.8.0",
     "soundfile>=0.12.1,<0.13.0",
     "torchao==0.15.0",
     "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
-
-[[tool.uv.index]]
-url = "https://mirrors.aliyun.com/pypi/simple/"
-default = true
 
 [[tool.uv.index]]
 name = "pytorch-cu129"
