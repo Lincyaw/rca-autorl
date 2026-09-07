@@ -21,10 +21,10 @@
 # the roster stays an allowlist — a later base-bundle addition cannot change
 # what this episode can do.
 #
-# `compaction-basic` compacts at `thresholdRatio` (0.8) of the MODEL's context
-# window, which `llm-deepseek` reads from $DSH_CONTEXT_WINDOW and otherwise
-# assumes is 1M. DshWorkflow sets that variable from `econfig.context_window`;
-# leave it unset only when the served window really is the harness default.
+# `compaction-basic` compacts at `thresholdRatio` of the MODEL's context window,
+# which `llm-deepseek` reads from $DSH_CONTEXT_WINDOW and otherwise assumes is
+# 1M. DshWorkflow sets that variable from AReaL's `sglang.context_length`; leave
+# it unset only when the served window really is the harness default.
 - insert:
     - id: token-meter
       name: '@deepseek-ai/dsh-token-meter'

@@ -21,8 +21,6 @@ class DshConfig:
     model: str = "default"
     dataset_root: str = ""
     dsh_home: str = ""
-    max_tokens: int = 8192
-    context_window: int = 0
     timeout: float = 1800.0
 
 
@@ -55,7 +53,16 @@ def main(args: list[str]) -> None:
     valid_dataset = (
         load_rca_dataset(config.valid_dataset.path) if config.valid_dataset is not None else None
     )
-    workflow_kwargs = {"econfig": asdict(config.econfig)}
+    # The generation cap and the serving window are AReaL's to declare, not
+    # ours to duplicate: gconfig.max_new_tokens is what the harness sends as the
+    # request's `max_tokens`, and sglang.context_length is the window compaction
+    # must trigger below. Passing them through keeps one number per concept.
+    econfig: dict[str, Any] = {
+        **asdict(config.econfig),
+        "max_tokens": int(config.gconfig.max_new_tokens),
+        "context_window": int(config.sglang.context_length or config.gconfig.max_tokens),
+    }
+    workflow_kwargs = {"econfig": econfig}
 
     with PPOTrainer(
         config,

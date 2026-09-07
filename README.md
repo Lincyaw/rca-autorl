@@ -84,8 +84,10 @@ workflow launches one `dsh` runtime whose `DEEPSEEK_BASE_URL` and `DEEPSEEK_API_
 those values, runs the incident as a single session in the case's snapshot directory, and
 returns one scalar reward in the format expected by AReaL v2. The runtime posts
 OpenAI-compatible `POST {base_url}/chat/completions` requests, so the proxy records the
-whole trajectory. Keep `econfig.max_tokens` below `sglang.context_length`: the harness
-default per-request cap is 256k and the inference worker rejects it.
+whole trajectory. Generation limits stay AReaL's: `gconfig.max_new_tokens` becomes the
+request's `max_tokens` (the harness default is 256k, which the inference worker would
+reject) and `sglang.context_length` becomes the window compaction triggers below.
+`train.py` passes both into the workflow, so neither is declared twice.
 
 Reward is temporarily fixed at `0.0`. The verifier and reward design will be added later;
 until then the training entry exercises rollout plumbing but produces no policy-gradient

@@ -15,14 +15,6 @@ econfig:
   dsh_home: ${cluster.fileroot}/dsh-home
   # Per-request output cap sent to the rollout proxy; must stay below
   # sglang.context_length, otherwise the harness default (256k) is rejected.
-  # Reasoning shares this budget with the answer: at 4096 with high reasoning
-  # effort an episode spent the whole cap thinking and never emitted
-  # submit_result. It must still leave room under the serving window once the
-  # prompt has grown to the compaction threshold — see the rca-harness row.
-  max_tokens: 8192
-  # Tied to the serving window so compaction triggers before sglang rejects the
-  # request; the two must not drift.
-  context_window: ${sglang.context_length}
   timeout: 1800.0
 cluster:
   n_nodes: 1
@@ -56,7 +48,12 @@ rollout:
 gconfig:
   n_samples: 8
   min_new_tokens: 0
-  max_new_tokens: 512
+  # The harness sends this as the request's `max_tokens`. Reasoning shares the
+  # budget with the answer: at 4096 under high reasoning effort an episode spent
+  # the whole cap thinking and never emitted submit_result. It must also leave
+  # room under sglang.context_length once the prompt reaches the compaction
+  # threshold — see the rca-harness row's thresholdRatio.
+  max_new_tokens: 8192
   greedy: false
   temperature: 0.7
   reward_normalization: false

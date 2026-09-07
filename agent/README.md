@@ -118,8 +118,8 @@ allowlist — a later base-bundle addition cannot change what an episode can do.
 Two thresholds have to be told the truth or the whole thing is inert.
 `compaction-basic` compacts at `thresholdRatio` (0.8) of the *model's* context
 window, which `llm-deepseek` reads from `$DSH_CONTEXT_WINDOW` and otherwise
-assumes is 1M; `DshWorkflow` sets it from `econfig.context_window`, and the
-smoke config ties that to `sglang.context_length` so the two cannot drift. The
+assumes is 1M; `train.py` passes `sglang.context_length` through to it, so the
+serving window is declared once, by AReaL. The
 `tool-result-pruner` threshold sits below the `sql` tool's `maxChars`, so a past
 result shrinks to a head plus its `(saved to qN.tsv)` tail while the notebook
 keeps the finding.
