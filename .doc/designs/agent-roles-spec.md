@@ -4,7 +4,7 @@
 > 状态：draft
 
 > **Status note (2026-04-30)**:
-> - 这是早期的详细实现 spec。当前**高层架构**以 `paper/ideas/triadic-self-play/v0-overview.md` 为准，**训练流程**以 `.doc/designs/training-pipeline.md` 为准。本 spec 在 TaskAdapter / Reward / 指标定义这些细节上仍是权威。
+> - 这是早期的详细 spec。当前**高层架构**以 `paper/ideas/triadic-self-play/v0-overview.md` 为准，**训练流程**以 `.doc/designs/training-pipeline.md` 为准，**代码结构**以 `README.md` 和 `agent/README.md` 为准。本 spec 保留的是**角色定义**（§2）与**指标 / reward 定义**（§5）——描述已删除的 TaskAdapter / RewardStrategy / Gateway 框架的章节（原 §4、§8、§9 与 Phase 1.5）已随该框架一同移除，编号保留断层以免打断既有引用。
 > - **World Model Agent**（§2.2 / §5.2 / Phase 2a）从主线移到**正交研究线**，见 `paper/ideas/world-model/v0.md`。当前主线 4 个 agent 是 RCA / FI / Verifier / Controller；WM 不在主线但作为独立研究 topic 保留，本 spec 的 §2.2 / §5.2 / Phase 2a 是其实施底稿。
 > - **Verifier ≡ Verification Agent** —— 新文档统一用 "Verifier"（对齐 self_play_evolves 论文术语），本 spec 沿用 "Verification Agent"，二者等价。
 > - **Phase 编号**与 CLAUDE.md North-star 的 "Phase" 是同一轴；与 `training-pipeline.md` 的 "Stage" 是不同轴（前者是结果里程碑，后者是训练过程阶段）。
@@ -13,7 +13,7 @@
 
 ## 1. 系统目标
 
-训练一组专精 agent，形成微服务故障分析与注入的完整 pipeline。每个 agent 通过 TaskAdapter + AgentRuntime + RewardStrategy 的组合赋予角色能力，独立训练、组合评估。各 agent 的 base model 选型以及是否共享同一个 base 留给 stage kickoff 时根据实验决定。
+训练一组专精 agent，形成微服务故障分析与注入的完整 pipeline。每个 agent 由一套 harness 组合（工具集 + persona + 答案通道）、一个 workflow 和一个 reward 定义，独立训练、组合评估。各 agent 的 base model 选型以及是否共享同一个 base 留给 stage kickoff 时根据实验决定。
 
 最终目标：通过 Fault Injection Agent 与 RCA Agent 的对抗训练，持续提升 RCA 能力的覆盖面，同时发现系统中高风险的故障盲区。
 
@@ -34,11 +34,11 @@
 - 因果图（nodes, edges, root_causes, component_to_service）
 - 根因列表
 
-**工具调用**：通过 AgentM 框架的工具接口查询可观测数据
+**工具调用**：通过 DeepSeek Harness 的 `sql` 工具查询快照（见 `agent/README.md`）
 
 **Reward**：root-cause F1（预测根因集合与实际根因集合的 F1 分数）
 
-**当前状态**：已实现（RCATaskAdapter + AgentMRuntime + RootCauseMatchRewardStrategy）
+**当前状态**：agent loop 与工具已实现（`agent/rca-harness`）；reward 仍是 placeholder 0.0，verifier 未实现
 
 ---
 
@@ -140,7 +140,7 @@ Phase 1-2 由商业模型驱动，为其他 agent 提供 reward signal：
 - 为 World Model 提供 reward：snapshot 观测比对
 - 远期（Phase 3-4）：训练好的 Verification 模型可提供 learned reward signal，捕捉硬编码指标无法覆盖的细粒度判定
 
-**当前状态**：未实现（Phase 1 使用硬编码 F1 作为 RCA reward，不依赖 Verification）
+**当前状态**：未实现（Phase 1 计划用硬编码 F1 作为 RCA reward，不依赖 Verification）
 
 ---
 
@@ -148,7 +148,7 @@ Phase 1-2 由商业模型驱动，为其他 agent 提供 reward signal：
 
 ### 3.1 训练阶段（独立）
 
-每个 agent 独立训练，各自有自己的 TaskAdapter + AgentRuntime + RewardStrategy：
+每个 agent 独立训练，各自有自己的 harness 组合、workflow 与 reward：
 
 ```
 Base Model (e.g. Qwen2.5-7B)
@@ -238,111 +238,6 @@ Round N:
   → 分别更新 FI Agent → v_{N+1}, RCA Agent → v_{N+1}
   → Round N+1
 ```
-
----
-
-## 4. 共享基础设施
-
-### 4.1 需要扩展的 contracts
-
-当前 `autorl.contracts` 需要支持：
-- **因果图（CausalGraph）**：nodes, edges, root_causes 的标准格式（已有雏形）
-- **故障注入方案（InjectionPlan）**：注入类型、目标服务、参数、预期影响
-- **系统状态快照（SystemSnapshot）**：包含 metrics, logs, traces 的可观测数据快照
-- **传播路径（PropagationPath）**：action → intermediate states → final state
-- **验证结果（VerificationResult）**：有效性判定 + 差异分析
-
-这些 contract 定义为 typed dataclass，作为各 Agent TaskAdapter 内部的类型校验和文档用途。通用接口（`dict[str, Any]`）保持不变以兼容 AReaL 序列化。
-
-### 4.2 需要新增的 TaskAdapter
-
-| Agent | TaskAdapter | 说明 |
-|-------|------------|------|
-| RCA | `RCATaskAdapter` | ✅ 已有 |
-| World Model | `WorldModelTaskAdapter` | 需新建 |
-| Fault Injection | `FaultInjectionTaskAdapter` | 需新建 |
-| Verification | `VerificationTaskAdapter` | 需新建 |
-
-### 4.3 需要新增的 RewardStrategy
-
-| Agent | Reward | 设计要点 |
-|-------|--------|---------|
-| RCA | `RootCauseMatchRewardStrategy` | ✅ 已有，Phase 1 F1 硬匹配；Phase 2+ LLM-as-judge 语义匹配 |
-| World Model | `SnapshotPredictionRewardStrategy` | node_f1 × w1 + metric_direction_accuracy × w2 + edge_f1 × w3（基于 snapshot 自动对比） |
-| Fault Injection | `AdversarialInjectionRewardStrategy` | rca_defeat × injection_validity × blast_bonus（乘法结构，无效注入归零） |
-| Verification | — | Phase 1-2 不训练，由商业模型驱动；Phase 3-4 的 reward 待定 |
-
-### 4.4 需要新增的 JudgeGateway
-
-**背景**：多个 RewardStrategy 需要调用商业模型完成 reward 计算（FI 的对抗 reward 需要调用 RCA 对手、Phase 2 RCA 需要 LLM-as-judge、WM 需要 Verification 做 snapshot 比对）。当前 `RewardStrategy.compute()` 没有标准方式调用外部模型。
-
-**方案**：在 `autorl.contracts.gateway` 中新增 `JudgeGateway` 抽象：
-
-```python
-class JudgeGateway(ABC):
-    @abstractmethod
-    async def judge(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        """Call commercial model for reward computation."""
-```
-
-在 `RuntimeContext` 中新增 `judge_gateway: JudgeGateway | None` 字段（替代当前的 `judge_base_url` metadata hack）。
-
-实现：
-- `CommercialModelJudgeGateway`：包装 OpenAI-compatible API，temperature=0，结构化 prompt
-- `RuleBasedJudgeGateway`：基于预置规则代码的确定性判定
-- `HybridJudgeGateway`：规则覆盖的 case 走规则，其余走商业模型
-
-JudgeGateway 统一解决三个需求：
-1. FI Agent 的 adversarial reward（judge 调用商业模型 RCA 做根因定位，判定 rca_defeat）
-2. Phase 2+ RCA 的 LLM-as-judge 语义匹配
-3. WM 的 Verification Agent 做 snapshot 比对
-
-### 4.5 Gateway 工厂扩展
-
-**背景**：当前 `build_env_gateway(mode, base_url)` 只支持 `none/local/http` 三种固定模式。不同 Agent 需要不同的 Gateway 实现（FI 的树形 action space、WM 的 snapshot 数据读取等）。
-
-**方案**：在 config 中支持 import path 模式（与 task_adapter_path 一致）：
-
-```yaml
-# 固定模式（向后兼容）
-env_gateway_mode: none
-
-# 或自定义 import path
-env_gateway_path: autorl.gateways.fi_env.FaultInjectionEnvGateway
-env_gateway_kwargs:
-  tree_path: data/injection_tree.json
-```
-
-`build_env_gateway` 优先检查 `env_gateway_path`，fallback 到 `env_gateway_mode`。`build_tool_gateway` 和 `build_judge_gateway`（§4.4）同理——统一使用 import path 模式，通过 `judge_gateway_path` / `judge_gateway_kwargs` 配置。
-
-### 4.6 AgentM Runtime 泛化
-
-**背景**：当前 `AgentMRuntime` 硬编码调用 `run_investigation_headless`，与 RCA 场景绑定。WM/FI/Verification 若也使用 AgentM 做底座，需要不同的 scenario 和 runner。
-
-**方案**：各 Agent 各自实现 Runtime（`WorldModelAgentMRuntime`, `FIAgentMRuntime` 等），共享一个 `AgentMBase` mixin 处理公共逻辑（env override、run lock、trace 记录）。不同 Agent 的输入提取（`_extract_required_text`）和输出封装（`final_output` 格式）差异大，独立实现更清晰。
-
-```
-AgentMBase (mixin)
-  ├── _agentm_env_overrides()
-  ├── _get_agentm_run_lock()
-  └── _build_trajectory_shell()
-      ↓
-AgentMRuntime (RCA)           → run_investigation_headless
-WorldModelAgentMRuntime (WM)  → run_prediction_headless（待 AgentM 实现）
-FIAgentMRuntime (FI)          → run_injection_headless（待 AgentM 实现）
-```
-
-### 4.7 数据需求
-
-| 数据类型 | 来源 | 用途 |
-|---------|------|------|
-| RCABench cases | 已有 | RCA 训练、World Model 训练 |
-| 故障注入记录 | 需生成 | FI Agent 训练 |
-| 代码仓库 | 目标微服务 | World Model 代码阅读 |
-| 因果传播标注 | 需标注或从 injection.json 推导 | World Model ground truth |
-| RCA Agent 历史表现 | 训练过程产出 | FI Agent 输入 |
-| 注入前后 snapshot 对 | 从 RCABench case 提取或新注入 | World Model 训练数据 |
-| 树形故障候选项 | 需制作 | FI Agent action space |
 
 ---
 
@@ -661,36 +556,23 @@ reward = rca_defeat × injection_validity × (1 + 0.1 × (blast_radius - 1))
 - Mock：FI = RCABench 已有 case，Verification = 硬编码 F1
 - 依赖：agentm 子模块初始化、RCABench 数据准备
 
-### Phase 1.5: 框架基础设施扩展（Phase 2 前置）
-- 目标：补齐支撑多 Agent 训练的框架能力
-- 工作：
-  - **JudgeGateway 抽象** + CommercialModelJudgeGateway 实现（§4.4）——解锁 FI adversarial reward、LLM-as-judge、WM verification
-  - **Gateway 工厂 import path 化**（§4.5）——让不同 Agent 注入自定义 EnvGateway / ToolGateway
-  - **AgentMBase mixin 抽取**（§4.6）——从 AgentMRuntime 中提取公共逻辑
-  - **Domain contracts**（§4.1）——CausalGraph, InjectionPlan, SystemSnapshot, VerificationResult typed dataclass
-  - `RuntimeContext` 新增 `judge_gateway` 字段
-- 产出：框架可支持所有 Phase 2 Agent 的三组件开发
-- 依赖：无外部依赖，纯框架改动
-
 ### Phase 2a: World Model Agent（可与 2b/2c 并行）
 - 目标：实现 snapshot-based 因果传播预测训练
-- 工作：WorldModelTaskAdapter、WorldModelAgentMRuntime、SnapshotPredictionRewardStrategy、snapshot 前后对比工具
 - Reward：node_f1 + metric_direction_accuracy + edge_f1（全自动 snapshot 对比，无需 LLM judge）
-- Verification：通过 JudgeGateway 调用商业模型，预置规则代码 + 自主判定混合模式
+- Verification：调用商业模型，预置规则代码 + 自主判定混合模式
 - 依赖：Phase 1.5 完成、离线训练数据（历史注入 case 的前后 snapshot 对）、代码阅读工具集成
 
 ### Phase 2b: Verification Agent 基础设施（可与 2a/2c 并行）
 - 目标：搭建商业模型驱动的 Verification 基础设施（**不训练模型**）
-- 工作：CommercialModelJudgeGateway 的角色化配置（RCA judge / WM judge / FI validity judge）、预置规则代码库、judge 质量监控 pipeline
-- 产出：通过 JudgeGateway 为 RCA/WM/FI 提供评估服务
-- 依赖：Phase 1.5 JudgeGateway 完成、商业模型 API 接入
+- 工作：商业模型 judge 的角色化配置（RCA judge / WM judge / FI validity judge）、预置规则代码库、judge 质量监控 pipeline
+- 产出：为 RCA/WM/FI 提供评估服务
+- 依赖：商业模型 API 接入
 
 ### Phase 2c: Fault Injection Agent（可与 2a/2b 并行）
 - 目标：实现对抗性故障注入训练
-- 工作：FaultInjectionTaskAdapter、FIAgentMRuntime、AdversarialInjectionRewardStrategy、FaultInjectionEnvGateway（树形 action space）
 - Reward：rca_defeat × injection_validity × blast_bonus（乘法结构）
-- RCA 对手：通过 JudgeGateway 调用商业模型 RCA（水平稳定，提供有意义的对抗信号）
-- Verification：通过 JudgeGateway 调用商业模型（Phase 2b 产出）
+- RCA 对手：商业模型 RCA（水平稳定，提供有意义的对抗信号）
+- Verification：商业模型（Phase 2b 产出）
 - 依赖：Phase 1.5 完成、树形故障候选项制作、故障注入执行环境
 
 ### Phase 3: Mock 替换 + 重新评估
@@ -721,79 +603,7 @@ reward = rca_defeat × injection_validity × (1 + 0.1 × (blast_radius - 1))
 7. **Verification 与硬编码 reward 的一致性校准**：Phase 2 引入 LLM-as-judge 后，需要监控 judge 评分与 F1 硬匹配的相关系数。偏差过大说明 judge 漂移或被 exploit。已设计监控机制（§5.4），但具体阈值和响应策略待定。
 8. **树形 action space 的粒度和规模**：FI Agent 的故障候选项树的深度、广度、总节点数对训练效率和策略质量的影响待评估。
 9. **商业模型 mock 的质量保障**：不同商业模型做 mock 的行为差异可能导致训练出的 agent 在替换 mock 时退化。需要评估 mock→real degradation 的幅度和可接受范围。
-10. **JudgeGateway 接口粒度**：当前设计为单一 `judge(request) → response` 方法。FI adversarial reward 需要"运行一个完整的 RCA episode 后返回 F1"，比简单的 LLM-as-judge 调用复杂得多。是否需要在 JudgeGateway 内部支持 multi-turn 调用，还是由 RewardStrategy 自行编排多次 judge 调用？
-11. **AgentM SDK 扩展需求**：§4.6 中 WM/FI 各自的 AgentM Runtime 依赖 AgentM 侧新增对应的 headless runner（`run_prediction_headless`、`run_injection_headless`）。这是外部依赖——需要在 AgentM 仓库中同步开发新 scenario 和对应的 headless 入口。
+10. **对抗 reward 的编排位置**：FI 的 reward 是"跑完一个完整 RCA episode 后拿它的 F1"，比一次 LLM-as-judge 调用重得多——它要启动另一个 agent。这个编排放在 FI 的 workflow 里，还是放在 verifier 里？前者让 workflow 依赖另一个 agent 的 harness，后者让 verifier 不再只是打分。
 
 ---
 
-## 8. Mock 基础设施需求
-
-每个 agent 训练时需要 mock 其他角色。Mock 需求通过两层机制满足：
-
-**层 1：JudgeGateway（reward 计算中的 mock）**
-
-RewardStrategy 通过 `RuntimeContext.judge_gateway` 调用商业模型做 reward 判定。这是最核心的 mock 路径——FI 的对抗 reward、Phase 2 RCA 的 LLM-as-judge、WM 的 snapshot 验证都走此通道。详见 §4.4。
-
-**层 2：MockAgentRuntime（episode 中需要交互的 mock）**
-
-如果某个 Agent 的 episode 中需要与其他 Agent 实时交互（例如 Phase 4 对抗训练中 FI 需要实时调用 RCA），则需要通用 `MockAgentRuntime`。
-
-| 组件 | 说明 |
-|------|------|
-| `MockAgentRuntime` | 包装商业模型 API（OpenAI/Anthropic），实现 AgentRuntime 接口 |
-| mock config 字段 | 在 YAML config 中指定哪些角色用 mock：`rca_mock: gpt-4o`、`verification_mock: claude-sonnet` |
-| mock ↔ real 切换 | 同一个 config 可以通过改一个字段在 mock 和真实模型间切换 |
-| mock 质量监控 | mock 输出的分布应接近真实模型，需要定期对比 |
-
-**Phase 1-2 的 mock 策略**：优先用 JudgeGateway（层 1），只在 reward 计算中调用商业模型，不需要完整的 MockAgentRuntime。Phase 3-4 对抗训练循环中再引入 MockAgentRuntime（层 2）。
-
-Config 示例：
-```yaml
-# Phase 1: 训练 RCA Agent，Verification = 硬编码 F1
-judge_gateway_path: null  # Phase 1 不需要 judge
-reward_strategy_path: autorl.rewards.rca.RootCauseMatchRewardStrategy
-
-# Phase 2: 训练 FI Agent，RCA 对手 = 商业模型
-judge_gateway_path: autorl.gateways.judge.CommercialModelJudgeGateway
-judge_gateway_kwargs:
-  model: gpt-4o
-  role: rca_opponent
-reward_strategy_path: autorl.rewards.fi.AdversarialInjectionRewardStrategy
-```
-
----
-
-## 9. 与现有代码的映射
-
-### 9.1 框架兼容性评估（2026-04-13）
-
-当前框架的三组件插件模式（TaskAdapter + AgentRuntime + RewardStrategy + config 驱动组装）骨架设计正确，对单 Agent 独立训练完全支持。以下是逐需求的兼容性矩阵：
-
-| Spec 需求 | 框架支持 | 需要的改动 | 优先级 |
-|-----------|---------|-----------|--------|
-| RCA 独立训练 (Phase 1) | ✅ 完全 | 无 | — |
-| WM 独立训练 (Phase 2) | ⚠️ 基本 | 实现 WM 三组件 + 数据 pipeline | P1 |
-| FI 独立训练 (Phase 2) | ⚠️ 需扩展 | Gateway 工厂支持 import path；JudgeGateway 调商业模型 | P1 |
-| Verification 基础设施 | ⚠️ 需扩展 | JudgeGateway 抽象 + 商业模型调用标准化 | P1 |
-| 商业模型 Mock 解耦 | ⚠️ 需扩展 | JudgeGateway 统一 mock 调用通道 | P1 |
-| 对抗训练 (Phase 4) | ❌ 缺失 | 需要新 AdversarialWorkflow 编排多 Agent | P3 |
-| 分阶段 Reward 切换 | ✅ 支持 | RewardStrategy 按 config 切换 | — |
-| AgentM 多 Agent 底座 | ⚠️ 需重构 | AgentMBase mixin + 各 Agent 独立 Runtime | P2 |
-
-### 9.2 已有代码映射
-
-| 需求 | 现有实现 | 需要做的 |
-|------|---------|---------|
-| Agent 框架接口 | `autorl.contracts` (TaskSample, AgentInput, Trajectory, TaskOutcome) | 新增 domain contracts（CausalGraph, InjectionPlan, SystemSnapshot, VerificationResult） |
-| JudgeGateway | `RuntimeContext.metadata["judge_base_url"]`（非标准） | 新增 `JudgeGateway` 抽象 + `CommercialModelJudgeGateway` 实现 |
-| Gateway 工厂 | `factory.build_env_gateway(mode, base_url)` 支持 none/local/http | 扩展支持 `env_gateway_path` import path 模式 |
-| RCA Agent | `tasks.rca` + `runtime.agentm` + `rewards.rca` | 完善 eval pipeline |
-| World Model Agent | — | 新建 TaskAdapter + Runtime + Reward |
-| Fault Injection Agent | — | 新建 TaskAdapter + Runtime + Reward + FI EnvGateway |
-| Verification Agent | — | 新建 JudgeGateway 实现（商业模型驱动） |
-| AgentM 泛化 | `runtime.agentm.AgentMRuntime`（RCA 绑定） | 抽取 AgentMBase mixin，各 Agent 独立 Runtime |
-| 训练入口 | `experiments/agent_workflow/train.py` | 无需修改（靠 config 切换 agent） |
-| 单 Agent Workflow | `runtime.agent_workflow.UnifiedAgentWorkflow` | 无需修改（Phase 1-2） |
-| 对抗 Workflow | — | Phase 4 新建 `AdversarialWorkflow` |
-| 数据 | `data/rcabench.py` | 各 Agent 新增各自的 manifest builder |
-| 实验管理 | `experiments/` (刚设置) | 按 agent role 组织实验 |
