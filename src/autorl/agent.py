@@ -6,8 +6,9 @@ import asyncio
 import json
 import os
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Unpack
+from typing import Any, Unpack
 
 from areal.utils import logging
 from deepseek_harness import DeepSeekHarness, RunResult
@@ -100,17 +101,43 @@ def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:
     )
 
 
-def submitted_result(result: RunResult) -> dict[str, JsonValue] | None:
-    """The arguments of the episode's `submit_result` call, or None when it never came.
+def accepted_call_ids(events: Sequence[dict[str, Any]]) -> set[str]:
+    """Call ids whose `tool/result` is not an error."""
+    accepted = set()
+    for event in events:
+        if event.get("type") != "tool/result":
+            continue
+        block = event.get("data", {}).get("message", {}).get("content", [{}])[0]
+        call_id = block.get("toolCallId")
+        if isinstance(call_id, str) and not block.get("isError", False):
+            accepted.add(call_id)
+    return accepted
 
-    The harness bundle's tool is terminal, so at most one call reaches the log.
-    This is where the verifier will read the fault propagation graph from.
+
+def submitted_result(result: RunResult) -> dict[str, JsonValue] | None:
+    """The arguments of the episode's accepted `submit_result` call, or None.
+
+    Only a call the tool actually executed counts. `submit_result` is terminal —
+    `execute` ends the turn and arms a monotonic guard — but argument-schema
+    validation runs *before* `execute`, so a call the registry rejects neither
+    ends the turn nor arms the guard, and the model retries inside the same
+    turn. A `tool/call` event is written before execution either way, so the log
+    can hold several, and the rejected one comes first.
+
+    Reading that first call is not a near miss: a submission rejected for
+    missing `edges` and `root_causes` is exactly the shape a verifier scores
+    zero, which would punish an episode for recovering rather than for failing.
+    On the first ten collected episodes three took that path. Hence the pairing
+    by call id against the result the tool returned.
     """
+    accepted = accepted_call_ids(result.events)
     for event in result.events:
         if event.get("type") != "tool/call":
             continue
         data = event.get("data")
         if not isinstance(data, dict) or data.get("name") != SUBMIT_TOOL:
+            continue
+        if data.get("callId") not in accepted:
             continue
         arguments = data.get("arguments")
         if not isinstance(arguments, str):
@@ -129,4 +156,4 @@ def _required_text(sample: RCASample, keys: tuple[str, ...]) -> str:
     raise ValueError(f"RCA sample needs one of: {', '.join(keys)}")
 
 
-__all__ = ["DshWorkflow", "resolve_data_dir", "submitted_result"]
+__all__ = ["DshWorkflow", "accepted_call_ids", "resolve_data_dir", "submitted_result"]

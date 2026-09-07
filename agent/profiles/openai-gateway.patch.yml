@@ -1,0 +1,33 @@
+# An OpenAI-compatible gateway as a model route.
+#
+# `sdk-minimal` registers exactly one LLM adapter, `deepseek-official`
+# (`llm-deepseek`), which speaks DeepSeek's own wire dialect. Pointing it at a
+# gateway by `base_url` alone works only as long as the gateway's stream is
+# byte-shaped like DeepSeek's: that adapter carries a tool call's id and name
+# across deltas with `if (call.id !== undefined)`, so a gateway spelling "no id
+# here" as `null` or `""` rather than by omitting the field erases them, and the
+# step fails as `Error: unknown tool ""` with its arguments intact.
+#
+# `llm-pi-ai` is the shipped adapter for exactly this — a multi-provider twin
+# whose `openai-completions` protocol is the OpenAI dialect proper. It ships
+# dormant with zero routes; this layer declares one. `credentials` comes with it
+# because `apiKeyEnv` is a reference the credential seam resolves per request,
+# and `sdk-minimal` mounts no such seam.
+#
+# The deployment's own values arrive as environment variables rather than
+# literals, so one layer serves every gateway and no key enters the repository.
+- insert:
+    - id: credentials
+      name: '@deepseek-ai/dsh-credentials-local'
+    - id: llm-pi-ai
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        providers:
+          gateway:
+            displayName: !!js process.env.RCA_TEACHER_BASE_URL
+            apiKeyEnv: RCA_TEACHER_API_KEY
+            api: openai-completions
+            baseURL: !!js process.env.RCA_TEACHER_BASE_URL
+            models:
+              - id: !!js process.env.RCA_TEACHER_MODEL
+                contextWindow: !!js Number(process.env.DSH_CONTEXT_WINDOW ?? 262144)

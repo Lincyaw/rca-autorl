@@ -17,11 +17,10 @@ cluster:
     type: nfs
     nfs_record_root: .runs/dsh-rca-sft-smoke/name_resolve
 
-# Distill output from llmharness — extractor.jsonl carries 190 rows of
-# {input.{system,user}, target.messages[<think>...</think> + tool_calls]}
-# for the 10-case sft-10case-2026-05-18 bundle. Path is relative to the
-# rca-autorl working dir; override with -p train_dataset.path=... when
-# pointing at a different distill output.
+# Exported teacher sessions: one row per conversation
+# ({messages, tools}), which autorl.data.sft expands into one training
+# row per assistant turn. Path is relative to the rca-autorl working
+# dir; override with -p train_dataset.path=... for another export.
 train_dataset:
   type: sft
   path: .runs/sft/rca_sessions.jsonl

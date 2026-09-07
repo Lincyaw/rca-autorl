@@ -23,13 +23,16 @@ DshWorkflow ──▶ DeepSeekHarness SDK ──▶ dsh runtime subprocess
 - `src/autorl/harness.py`: installs the RCA harness bundle into a `dsh` profile.
 - `agent/`: the RCA harness — the `dsh` bundle that replaces the shell with a
   bounded DuckDB `sql` tool over the snapshot, an investigation notebook, and
-  the terminal `submit_result`, plus the RCA scenario patch. Its
+  the terminal `submit_result`, plus the RCA scenario patch and the gateway
+  model route. Its
   [README](agent/README.md) is the design.
 - `src/autorl/algorithm.py`: validates the AReaL v2 RLOO configuration.
 - `src/autorl/train.py`: JSONL loading plus `PPOTrainer` launch.
 - `src/autorl/train_sft.py`: `SFTTrainer` launch for distilled RCA trajectories.
 - `src/autorl/data/sft.py`: chat-template rendering and assistant-only loss masks.
 - `src/autorl/data/export.py`: turns `dsh` session logs into SFT rows.
+- `src/autorl/data/collect.py`: runs cases against a teacher endpoint to fill a
+  Harness home with the sessions SFT trains on.
 - `configs/train/dsh_rca_smoke.yaml`: one-GPU RCA RL smoke config.
 - `configs/sft/`: SFT configs for distilled trajectories.
 
@@ -98,26 +101,42 @@ score.
 
 ## SFT
 
-SFT consumes the sessions the RL rollouts already wrote. Export a Harness home to
-the row format first, then train on it; prompt tokens and tool responses are
-masked, while assistant reasoning and tool calls are supervised.
+Teacher trajectories come from `autorl.data.collect`, which points the same
+harness composition at a served model instead of AReaL's rollout proxy. Export
+the Harness home it fills, then train on it.
 
 ```bash
-python -m autorl.data.export .runs/dsh-rca-smoke/dsh-home .runs/sft/rca_sessions.jsonl
+export RCA_TEACHER_BASE_URL=... RCA_TEACHER_API_KEY=...
+python -m autorl.data.collect $RCA_DATASET_ROOT/data.jsonl .runs/sft-collect/dsh-home \
+  --limit 10 --concurrency 5
+python -m autorl.data.export .runs/sft-collect/dsh-home .runs/sft/rca_sessions.jsonl
 ./scripts/run_sft_smoke.sh
 ```
 
-The exporter follows the session's final surface, so a compacted episode exports
-the checkpoint the model actually had rather than the superseded originals, and
-it pairs tool calls to their results by call id rather than by log order. A long
-RCA episode is long: one 210-message session tokenizes to ~150k tokens, past any
-training window, so `train_dataset.max_length` decides what survives.
+`--base-url` layers `agent/profiles/openai-gateway.patch.yml`, which mounts the
+shipped `llm-pi-ai` adapter and declares one `openai-completions` route. That
+layer, not a `base_url` override, is what makes a gateway usable: `sdk-minimal`
+registers only the `deepseek-official` adapter, which carries a streamed tool
+call's id and name across deltas with an `!== undefined` guard, so a gateway
+that spells "no id here" as `null` or `""` erases them and the step fails as
+`Error: unknown tool ""`. Without `--base-url` the episode runs on that shipped
+route, which reads `DEEPSEEK_API_KEY`.
+
+The exporter writes the conversation the teacher actually held — the session's
+final surface, folded the way the harness folds it, plus the tool schemas it was
+offered. It decides nothing about supervision: `autorl.data.sft` renders those
+messages through the tokenizer's own chat template, once per assistant turn and
+exactly as a rollout would, and the mask falls out of that. Per turn rather than
+once per trajectory because a thinking model's template renders a turn's
+reasoning only when the turn follows the conversation's last `user` message; a
+whole trajectory rendered in one pass keeps `<think>` on its last turns and
+drops it from every earlier one. Ten episodes become 190 rows.
 
 Override the dataset or model with normal AReaL config patches:
 
 ```bash
 ./scripts/run_sft_smoke.sh \
-  -p train_dataset.path=/path/to/extractor.jsonl \
+  -p train_dataset.path=/path/to/rca_sessions.jsonl \
   -p actor.path=/path/to/model
 ```
 

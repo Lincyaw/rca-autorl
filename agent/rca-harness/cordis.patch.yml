@@ -41,6 +41,24 @@
         # 6.5k at a 32k window and less than one FPG submission under high
         # reasoning effort. 0.6 x 32768 + 8192 max_tokens = 27.9k, inside 32k.
         thresholdRatio: 0.6
+        # Output cap for the checkpoint request, reasoning included. The shipped
+        # 8192 is not enough for a thinking model to reason and then write this
+        # template: across the first ten collected episodes the successful
+        # checkpoints took a median 6535 output tokens and 11 of 46 landed
+        # within a tenth of the cap, while 23 of 34 failures were
+        # `finish.kind === 'max-tokens'`. A truncated checkpoint is discarded
+        # whole, so the episode pays a full summarizer request, frees nothing,
+        # and trips the same threshold on its next step — 45% of all compaction
+        # time went to attempts that landed nothing.
+        #
+        # The ceiling is the serving window, not the model: the request replays
+        # the shadowed region (14.3k tokens at its largest here) before the
+        # instruction, so 14.3k + 16384 = 30.7k stays inside sglang's 32768 at
+        # rollout time. Raising this does not fix the other failure mode — a
+        # summary the engine refuses for not being smaller than what it
+        # replaces — which is the template asking for every SQL statement
+        # verbatim and so growing with the episode.
+        maxTokens: 16384
     # Prunes old tool results before the conversation compactor runs.
     # Threshold below the sql tool's maxChars (4000), so every non-trivial sql
     # result is pruned on the next compaction pass. The model sees the full

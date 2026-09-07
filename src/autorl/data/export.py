@@ -1,22 +1,32 @@
 """Turn DeepSeek Harness session logs into SFT rows.
 
-`autorl.data.sft` consumes the row shape AgentM's `llmharness-distill export`
-produced. Nothing produced it once the agent loop moved to `dsh`, so this module
-is the replacement: it reads a session's append-only JSONL and emits the same
-shape, which keeps the SFT tokenizer, the loss mask, and its tests unchanged.
+One session becomes one row: the conversation the teacher actually held, as the
+harness composed it, plus the tool schemas it was offered::
 
-One session becomes one row::
+    {"phase": "rca", "sample_id": ..., "root_session_id": ...,
+     "messages": [system, user, assistant, tool, user, assistant, ...],
+     "tools": [...],
+     "meta": {...}}
 
-    {"phase": "rca", "sample_id": ..., "root_session_id": ..., "turn_index": 0,
-     "input":  {"system": ..., "user": ...},
-     "target": {"messages": [assistant, tool, assistant, tool, ...]},
-     "meta":   {...}}
+Nothing here decides what is supervised. `autorl.data.sft` renders these
+messages through the tokenizer's own chat template, once per assistant turn and
+exactly as the rollout would, and the mask falls out of that. Keeping the split
+here would mean guessing at the template's rules — which turns keep their
+reasoning, how a tool call renders once its response exists — and every such
+guess is a place for training to drift from inference.
 
-The exported trajectory is the session's **final surface**, not its raw log. A
-compaction pass replaces events in place (`surfaceOp: {op: "replace"}`), and the
-replacement is what the model actually had in context by the end; exporting the
-superseded originals would supervise a student on context its teacher never saw.
-Ranges the compactor shadowed away are dropped for the same reason.
+Two things the row is careful about:
+
+*The conversation is the session's final surface, not its raw log.* A
+compaction pass replaces events in place, and the replacement is what the model
+had in context by the end; exporting the superseded originals would supervise a
+student on context its teacher never saw. `fold_surface` is the harness's own
+fold, transcribed.
+
+*The incident comes from the raw log.* A compaction checkpoint shadows the
+original question away, so on the surface it is simply gone. Read from the
+surface alone, the row would ask the student to continue an investigation it
+was never given.
 """
 
 from __future__ import annotations
@@ -29,33 +39,38 @@ from typing import Any
 SESSION_FILE = "session.jsonl"
 
 
-def read_surface(session_path: Path) -> list[dict[str, Any]]:
-    """Events in surface order after applying every append and replace."""
-    surface: list[dict[str, Any]] = []
-    by_seq: dict[int, int] = {}
-    for line in session_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        event = json.loads(line)
+def fold_surface(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Events in surface order, folded the way the harness itself folds them.
+
+    `surfaceOp.start` and `surfaceOp.end` are seqs that must both be *on the
+    current surface*, and the replacement shadows the nodes between their
+    **positions** — not the seqs numerically between them. The two readings
+    agree only until the first replacement: a replacement splices its own,
+    higher, seq in at the position of the range it shadowed, so from then on
+    surface order and seq order differ. Read numerically, a later replace then
+    shadows the wrong nodes — keeping events the model no longer had and
+    dropping ones it did — which breaks call/result pairing and truncates the
+    trajectory to nothing without saying so.
+    """
+    by_seq: dict[int, dict[str, Any]] = {}
+    nodes: list[int] = []
+    for event in events:
         op = event.get("surfaceOp")
+        if op is None:
+            continue
+        seq = int(event["seq"])
+        by_seq[seq] = event
         if op == "append":
-            by_seq[int(event["seq"])] = len(surface)
-            surface.append(event)
-        elif isinstance(op, dict) and op.get("op") == "replace":
-            start, end = int(op["start"]), int(op["end"])
-            positions = sorted(index for seq, index in by_seq.items() if start <= seq <= end)
-            if not positions:
-                continue
-            surface[positions[0]] = event
-            for index in positions[1:]:
-                surface[index] = {}
-            by_seq = {
-                seq: index
-                for seq, index in by_seq.items()
-                if not (start <= seq <= end) or index == positions[0]
-            }
-            by_seq[int(event["seq"])] = positions[0]
-    return [event for event in surface if event]
+            nodes.append(seq)
+            continue
+        start, end = int(op["start"]), int(op["end"])
+        if start not in nodes or end not in nodes:
+            raise ValueError(f"replace at seq {seq}: [{start}..{end}] is not on the surface")
+        first, last = nodes.index(start), nodes.index(end)
+        if first > last:
+            raise ValueError(f"replace at seq {seq}: start {start} is after end {end}")
+        nodes[first : last + 1] = [seq]
+    return [by_seq[seq] for seq in nodes]
 
 
 def assistant_message(event: dict[str, Any]) -> dict[str, Any]:
@@ -84,11 +99,21 @@ def tool_message(event: dict[str, Any]) -> dict[str, Any]:
     return {"role": "tool", "content": text}
 
 
+def user_message(event: dict[str, Any]) -> dict[str, Any]:
+    text = "".join(b.get("text", "") for b in event["data"]["content"] if b.get("type") == "text")
+    return {"role": "user", "content": text}
+
+
+def is_incident(event: dict[str, Any]) -> bool:
+    """The episode's own question, as opposed to a turn the harness injected."""
+    return (event["data"].get("source") or {}).get("kind") == "user"
+
+
 def build_messages(surface: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The `[assistant, tool, ...]` sequence, paired by call id rather than by order.
+    """The surface as a chat sequence, tool results paired by call id.
 
     A chat template needs exactly one tool response per declared tool call, and
-    log order does not guarantee that: a compaction pass can shadow a result
+    surface order does not guarantee that: a compaction pass can shadow a result
     away, and an episode can end between a call and its result. Pairing by id
     makes the gap visible, and the trajectory is truncated at the first
     unanswered call rather than emitting a sequence the template cannot render.
@@ -103,82 +128,94 @@ def build_messages(surface: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(call_id, str):
             results[call_id] = event
 
-    assistants = [event for event in surface if event.get("type") == "assistant/message"]
+    remaining = sum(1 for event in surface if event.get("type") == "assistant/message")
     messages: list[dict[str, Any]] = []
-    for index, event in enumerate(assistants):
-        message = assistant_message(event)
+    for event in surface:
+        kind = event.get("type")
+        if kind == "user/message":
+            messages.append(user_message(event))
+            continue
+        if kind != "assistant/message":
+            continue
+        remaining -= 1
         call_ids = [
             block["id"]
             for block in event["data"]["message"]["content"]
             if block.get("type") == "tool-call"
         ]
         answered = [call_id for call_id in call_ids if call_id in results]
-        if len(answered) != len(call_ids) and index < len(assistants) - 1:
+        if len(answered) != len(call_ids) and remaining > 0:
             break
-        messages.append(message)
+        messages.append(assistant_message(event))
         messages.extend(tool_message(results[call_id]) for call_id in answered)
     return messages
 
 
 def export_session(session_path: Path, sample_id: str | None = None) -> dict[str, Any] | None:
     """One SFT row for one session, or None when it carries no assistant turn."""
-    surface = read_surface(session_path)
-    header = next(
-        (
-            json.loads(line)["data"]["header"]
-            for line in session_path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and json.loads(line).get("type") == "request/header"
-        ),
-        None,
-    )
-    system = str(header.get("system", "")) if header else ""
+    events = [
+        json.loads(line)
+        for line in session_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    headers = (e["data"]["header"] for e in events if e.get("type") == "request/header")
+    header: dict[str, Any] = next(headers, {})
+    incident = next((e for e in events if e.get("type") == "user/message" and is_incident(e)), None)
 
-    user = ""
-    for event in surface:
-        if (
-            event.get("type") == "user/message"
-            and event["data"].get("source", {}).get("kind") == "user"
-        ):
-            user = "".join(
-                b.get("text", "") for b in event["data"]["content"] if b.get("type") == "text"
-            )
-            break
-
-    messages = build_messages(surface)
+    messages: list[dict[str, Any]] = []
+    system = str(header.get("system", ""))
+    if system:
+        messages.append({"role": "system", "content": system})
+    if incident is not None:
+        messages.append(user_message(incident))
+    messages.extend(build_messages(fold_surface(events)))
 
     if not any(m["role"] == "assistant" for m in messages):
         return None
-    session_id = json.loads(session_path.read_text(encoding="utf-8").splitlines()[0])["id"]
     return {
         "phase": "rca",
-        "sample_id": sample_id or session_id,
-        "root_session_id": session_id,
-        "turn_index": 0,
-        "input": {"system": system, "user": user},
-        "target": {"messages": messages},
+        "sample_id": sample_id or events[0]["id"],
+        "root_session_id": events[0]["id"],
+        "messages": messages,
+        "tools": header.get("tools") or [],
         "meta": {"source": str(session_path)},
     }
 
 
-def export_home(dsh_home: Path) -> list[dict[str, Any]]:
-    """Every session under a Harness home, oldest first."""
-    rows = []
+def export_home(dsh_home: Path) -> tuple[list[dict[str, Any]], list[tuple[Path, str]]]:
+    """Every session under a Harness home, oldest first, and the ones with no row.
+
+    A session that exports to nothing is reported rather than skipped: it means
+    the trajectory was lost, not that the episode was empty, and losing it
+    silently hides exactly the long compacted episodes that are hardest to
+    collect.
+    """
+    rows, skipped = [], []
     for path in sorted(dsh_home.glob(f"sessions/*/*/{SESSION_FILE}")):
-        row = export_session(path)
-        if row is not None:
+        try:
+            row = export_session(path)
+        except ValueError as error:
+            skipped.append((path, str(error)))
+            continue
+        if row is None:
+            skipped.append((path, "no assistant turn survived pairing"))
+        else:
             rows.append(row)
-    return rows
+    return rows, skipped
 
 
 def main(argv: list[str]) -> None:
     if len(argv) != 2:
         raise SystemExit("usage: python -m autorl.data.export <dsh-home> <out.jsonl>")
-    rows = export_home(Path(argv[0]).expanduser().resolve())
+    rows, skipped = export_home(Path(argv[0]).expanduser().resolve())
     out = Path(argv[1]).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(f"exported {len(rows)} session(s) to {out}")
+    for path, reason in skipped:
+        print(f"  no row from {path.parent.name}: {reason}")
 
 
 if __name__ == "__main__":

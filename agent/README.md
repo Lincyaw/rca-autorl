@@ -19,6 +19,7 @@ agent/
     src/debug.js           the env-gated trace
   profiles/
     rca.patch.yml    the RCA scenario layer — the persona
+    openai-gateway.patch.yml  an OpenAI-compatible gateway as a model route
 ```
 
 The model sees exactly three tools: `sql`, `take_note`, and `submit_result`.
@@ -101,12 +102,16 @@ schema DSL cannot express — non-empty node and root-cause lists, and every edg
 endpoint and root cause resolving to a declared node id. A violation becomes an
 ordinary error result, so the model retries inside the same turn.
 
-The call is terminal: `exec.concludeTurn()` stops the loop after the step, and a
-monotonic `ctx.tools.guard()` denies every later call in the same response, so
-one episode produces at most one submission. The trainer reads it back from the
-session log's `tool/call` event (`autorl.agent.submitted_result`), which is also
-why nothing else needs to persist it: model-visible input is already
-reconstructable from that log.
+The call is terminal *once it executes*: `exec.concludeTurn()` stops the loop
+after the step, and a monotonic `ctx.tools.guard()` denies every later call in
+the same response. Schema validation runs before `execute`, so a rejected call
+ends nothing and arms nothing, and the model retries inside the same turn — an
+episode can leave several `tool/call` events, the rejected ones first. Three of
+the first ten collected episodes did. `autorl.agent.submitted_result` therefore
+pairs each call with its `tool/result` by call id and reads the one the tool
+accepted; taking the first would hand the verifier a submission with no
+`root_causes` and score a recovered episode zero. Nothing else needs to persist
+the answer: model-visible input is already reconstructable from that log.
 
 ## Context management
 
@@ -142,10 +147,16 @@ subclasses it and replaces only the instruction and the one-shot call. Region
 selection, token accounting, checkpoint landing, and the
 `<compacted-summary>` framing all stay with the shipped engine.
 
-The RCA template keeps SQL statements verbatim (a re-run query is a wasted
-step, and a submitted node must cite the statement that grounds it), keeps
-service, metric, table, and column names exact, and forbids promoting a
-hypothesis to a finding across a checkpoint.
+The RCA template keeps verbatim only the SQL that grounds a finding — a
+submitted node must cite the statement behind it — and records every other
+query as one line without its text, which is enough to stop a re-run. Scoping
+it that way is not tidiness: asked for every query verbatim, the checkpoint
+grew with the span it was replacing, and across the first ten collected
+episodes 45% of all compaction time went to summaries discarded for
+overrunning the token cap or for not being smaller than what they shadowed
+(875 queries run, 148 cited). The template also keeps service, metric, table,
+and column names exact, and forbids promoting a hypothesis to a finding across
+a checkpoint.
 
 ## Mechanism here, scenario there
 

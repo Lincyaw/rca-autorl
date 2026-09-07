@@ -1,19 +1,17 @@
 """SFT loss-mask correctness against a real Qwen3 Thinking tokenizer.
 
-Under the v19 extractor flow, an SFT row's ``target.messages`` is a
-multi-turn ``[assistant, tool, assistant, ...]`` sequence. Tool messages
-are deterministic witness output that the student must NOT learn to
-generate — supervising tool tokens would be wrong signal.
+`autorl.data.sft` turns one exported conversation into one row per assistant
+turn: the prompt is the conversation up to that turn with a generation prompt,
+the supervised span is the turn itself. This pins the two properties the
+trainer depends on:
 
-This test pins the expected behaviour of
-:func:`autorl.data.sft._convert_sample`:
-
-* tokens at ``loss_mask == 1`` positions decode to assistant-role content
-  only (``<think>`` blocks + tool_call payload),
-* tokens at ``loss_mask == 0`` positions decode to system + user prompt
-  + tool-role spans (the ``<tool_response>`` wrapper and inner body), and
-  the assistant-role headers within the first asst turn that the
-  template would have produced under ``add_generation_prompt=True``.
+* every assistant turn produces a row, and its supervised tokens decode to that
+  turn only — its `<think>` block and its tool call — while everything before
+  it, system and user and tool alike, stays unsupervised;
+* a turn's reasoning is present in its own supervised span even when a `user`
+  turn follows it later in the conversation. Rendered whole, the template drops
+  reasoning from every turn before the conversation's last `user` message; per
+  turn, the supervised turn is always last, so it never loses it.
 """
 
 from __future__ import annotations
@@ -45,7 +43,7 @@ src_path = Path(__file__).resolve().parents[1] / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from autorl.data.sft import _convert_sample  # noqa: E402
+from autorl.data.sft import convert_sample  # noqa: E402
 
 _QWEN3_MODEL_ID = "Qwen/Qwen3-4B-Thinking-2507"
 
@@ -61,86 +59,94 @@ def _load_qwen3_tokenizer():  # type: ignore[no-untyped-def]
         raise unittest.SkipTest(f"cannot load {_QWEN3_MODEL_ID}: {exc}") from None
 
 
+MESSAGES = [
+    {"role": "system", "content": "you are an rca agent"},
+    {"role": "user", "content": "endpoint /login is failing"},
+    {
+        "role": "assistant",
+        "content": "<think>look at the tables first</think>\n\n",
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {"name": "sql", "arguments": '{"statement":"SHOW TABLES"}'},
+            }
+        ],
+    },
+    {"role": "tool", "content": "abnormal_logs\nnormal_logs"},
+    # A harness turn mid-trajectory: this is what strips reasoning from every
+    # earlier assistant turn when the conversation is rendered in one pass.
+    {"role": "user", "content": "Note reminder: 10 queries have run since your last note."},
+    {
+        "role": "assistant",
+        "content": "<think>record the finding</think>\n\n",
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {"name": "take_note", "arguments": '{"note":"db slow"}'},
+            }
+        ],
+    },
+    {"role": "tool", "content": "notebook: db slow"},
+]
+
+TOOLS = [
+    {
+        "name": "sql",
+        "description": "Query the incident snapshot",
+        "parameters": {"type": "object", "properties": {"statement": {"type": "string"}}},
+    },
+    {
+        "name": "take_note",
+        "description": "Record a finding",
+        "parameters": {"type": "object", "properties": {"note": {"type": "string"}}},
+    },
+]
+
+
 class Qwen3LossMaskTests(unittest.TestCase):
-    def test_only_assistant_spans_supervised_in_multi_turn_target(self) -> None:
-        tokenizer = _load_qwen3_tokenizer()
-        sample = {
-            "phase": "extractor",
-            "sample_id": "case-x",
-            "root_session_id": "rsid",
-            "turn_index": 0,
-            "input": {
-                "system": "you are an extractor",
-                "user": '{"firing": "x"}',
-            },
-            "target": {
-                "messages": [
-                    {
-                        "role": "assistant",
-                        "content": "<think>plan first edit</think>\n\n",
-                        "tool_calls": [
-                            {
-                                "type": "function",
-                                "function": {
-                                    "name": "upsert_node",
-                                    "arguments": '{"id":"n1"}',
-                                },
-                            }
-                        ],
-                    },
-                    {"role": "tool", "content": "ok node n1"},
-                    {
-                        "role": "assistant",
-                        "content": "<think>now finalize</think>\n\n",
-                        "tool_calls": [
-                            {
-                                "type": "function",
-                                "function": {
-                                    "name": "finalize_extraction",
-                                    "arguments": "{}",
-                                },
-                            }
-                        ],
-                    },
-                ]
-            },
-            "meta": {},
-        }
+    def setUp(self) -> None:
+        self.tokenizer = _load_qwen3_tokenizer()
+        self.rows = convert_sample({"messages": MESSAGES, "tools": TOOLS}, tokenizer=self.tokenizer)
 
-        out = _convert_sample(sample, tokenizer=tokenizer)
-        ids = out["input_ids"]
-        mask = out["loss_mask"]
-        self.assertEqual(len(ids), len(mask))
-        self.assertTrue(any(m == 1 for m in mask), "no tokens supervised")
-        self.assertTrue(any(m == 0 for m in mask), "no tokens unsupervised")
+    def _decode(self, row, bit):  # type: ignore[no-untyped-def]
+        return self.tokenizer.decode(
+            [tid for tid, m in zip(row["input_ids"], row["loss_mask"], strict=True) if m == bit]
+        )
 
-        supervised_ids = [tid for tid, m in zip(ids, mask, strict=True) if m == 1]
-        unsupervised_ids = [tid for tid, m in zip(ids, mask, strict=True) if m == 0]
-        supervised = tokenizer.decode(supervised_ids)
-        unsupervised = tokenizer.decode(unsupervised_ids)
+    def test_one_row_per_assistant_turn(self) -> None:
+        self.assertEqual(len(self.rows), 2)
+        for row in self.rows:
+            self.assertEqual(len(row["input_ids"]), len(row["loss_mask"]))
+            self.assertTrue(any(row["loss_mask"]), "no tokens supervised")
+            self.assertFalse(all(row["loss_mask"]), "no tokens unsupervised")
 
-        # Assistant-role evidence must land in mask=1.
-        self.assertIn("plan first edit", supervised)
-        self.assertIn("now finalize", supervised)
-        self.assertIn("upsert_node", supervised)
-        self.assertIn("finalize_extraction", supervised)
+    def test_supervised_span_is_the_turn_alone(self) -> None:
+        first, second = self.rows
+        self.assertIn("look at the tables first", self._decode(first, 1))
+        self.assertIn("SHOW TABLES", self._decode(first, 1))
+        self.assertNotIn("record the finding", self._decode(first, 1))
 
-        # The system + user prompt body must be in mask=0.
-        self.assertIn("you are an extractor", unsupervised)
-        self.assertIn('{"firing": "x"}', unsupervised)
+        self.assertIn("record the finding", self._decode(second, 1))
+        self.assertIn("take_note", self._decode(second, 1))
+        self.assertNotIn("look at the tables first", self._decode(second, 1))
 
-        # The tool-role wrapper + body must be in mask=0. Qwen renders
-        # tool messages as ``<|im_start|>user\n<tool_response>...``, so
-        # the literal ``<tool_response>`` marker is the strongest signal
-        # that the tool span was correctly excluded.
-        self.assertIn("<tool_response>", unsupervised)
-        self.assertIn("ok node n1", unsupervised)
-        self.assertNotIn("<tool_response>", supervised)
-        self.assertNotIn("ok node n1", supervised)
+    def test_prompt_side_is_never_supervised(self) -> None:
+        for row in self.rows:
+            unsupervised = self._decode(row, 0)
+            self.assertIn("you are an rca agent", unsupervised)
+            self.assertIn("endpoint /login is failing", unsupervised)
+        # The tool response and the harness reminder precede the second turn.
+        second = self._decode(self.rows[1], 0)
+        self.assertIn("abnormal_logs", second)
+        self.assertIn("Note reminder", second)
 
-        # System / user content must NOT leak into the supervised range.
-        self.assertNotIn("you are an extractor", supervised)
-        self.assertNotIn('{"firing": "x"}', supervised)
+    def test_reasoning_survives_a_later_user_turn(self) -> None:
+        """The whole point of one row per turn: turn 1 keeps its own reasoning."""
+        whole = self.tokenizer.apply_chat_template(
+            MESSAGES, tools=TOOLS, tokenize=False, add_generation_prompt=False
+        )
+        self.assertNotIn("look at the tables first", whole)
+        self.assertIn("look at the tables first", self._decode(self.rows[0], 1))
 
 
 if __name__ == "__main__":
