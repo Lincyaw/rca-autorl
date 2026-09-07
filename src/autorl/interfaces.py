@@ -1,4 +1,4 @@
-"""Typed contracts at the AReaL-to-AgentM boundary."""
+"""Typed contracts at the AReaL-to-DeepSeek-Harness boundary."""
 
 from __future__ import annotations
 
@@ -32,12 +32,14 @@ class AReaLRunOptions(TypedDict):
     http_client: NotRequired[object]
 
 
-class AgentMWorkflowConfig(TypedDict, total=False):
+class DshWorkflowConfig(TypedDict, total=False):
     scenario: str
     model: str
-    max_turns: int
+    max_tokens: int
     timeout: float
     dataset_root: str
+    dsh_home: str
+    context_window: int
 
 
 class RewardNormConfig(Protocol):
@@ -89,7 +91,7 @@ __all__ = [
     "AReaLAgentWorkflow",
     "AReaLRLOOConfig",
     "AReaLRunOptions",
-    "AgentMWorkflowConfig",
+    "DshWorkflowConfig",
     "JsonValue",
     "RCASample",
     "TensorLike",

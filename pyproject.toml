@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "areal[sglang]>=2.0.0,<3.0.0",
-    "agentm",
+    "deepseek-harness-sdk>=0.1.2rc1",
 ]
 
 [build-system]
@@ -64,8 +64,9 @@ warn_unreachable = true
 
 [[tool.mypy.overrides]]
 module = [
-    "agentm.*",
     "areal.*",
+    "deepseek_harness.*",
+    "deepseek_harness_runtime.*",
     "datasets.*",
 ]
 ignore_missing_imports = true

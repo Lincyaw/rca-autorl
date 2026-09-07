@@ -17,9 +17,10 @@ See `AGENTS.md` for detailed coding style, testing, and commit guidelines — th
 paper/
   ideas/             — research idea 家族（v0 母 idea + v1 子 hypothesis）
   (later)            — 后续会有 sections/、figures/、experiments/ 等
-src/autorl/          — AgentM workflow、RCA verifier 与 AReaL 训练入口
+src/autorl/          — DeepSeek Harness workflow 与 AReaL 训练入口
+agent/               — 我们自己的 harness：dsh bundle（sql over snapshot / take_note / submit_result）+ scenario patch
 experiments/         — 实验配置、运行脚本、结果记录
-third_party/         — AReaL 子模块；AgentM 通过锁定版本的 SDK package 引入
+third_party/         — AReaL 子模块；DeepSeek Harness 通过锁定版本的 SDK package 引入
 ```
 
 ## 当前研究状态
@@ -46,7 +47,7 @@ third_party/         — AReaL 子模块；AgentM 通过锁定版本的 SDK pack
 
 ### Scaffold（始终激活）
 1. **Pipeline health** — Ruff 和 mypy 全部通过（`./scripts/check.sh`）
-2. **Integration simplicity** — Agent loop 留在 AgentM；本仓库仅负责 data、workflow、verifier 与 trainer wiring
+2. **Integration simplicity** — Agent loop 留在 DeepSeek Harness；本仓库负责 data、harness 组合（`agent/`）、workflow、verifier 与 trainer wiring
 
 ### Phase 1 — RCA baseline
 3. **RCA F1** > 0.6 on RCABench eval
@@ -78,7 +79,7 @@ Secondary criterion: **simplicity** — 同等指标下选代码更少的方案�
 - Static checks: `./scripts/check.sh` (Ruff lint/format + mypy)
 - Smoke test: `./scripts/run_smoke.sh`
 - Python: 3.12, `src/` layout, type hints required
-- AReaL is a submodule; AgentM is a pinned SDK package dependency
+- AReaL is a submodule; DeepSeek Harness (`deepseek-harness-sdk`) is a pinned SDK package dependency
 - Language: discussion in Chinese, code/docs in English
 
 ## Active skills

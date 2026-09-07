@@ -1,4 +1,4 @@
-experiment_name: autorl-agentm-rca-smoke
+experiment_name: autorl-dsh-rca-smoke
 trial_name: local-smoke
 
 seed: 1
@@ -11,16 +11,22 @@ tokenizer_path: ${actor.path}
 econfig:
   scenario: rca
   model: default
-  dataset_root: ${oc.env:AGENTM_RCA_DATASET_ROOT,""}
-  max_turns: 128
+  dataset_root: ${oc.env:RCA_DATASET_ROOT,""}
+  dsh_home: ${cluster.fileroot}/dsh-home
+  # Per-request output cap sent to the rollout proxy; must stay below
+  # sglang.context_length, otherwise the harness default (256k) is rejected.
+  max_tokens: 4096
+  # Tied to the serving window so compaction triggers before sglang rejects the
+  # request; the two must not drift.
+  context_window: ${sglang.context_length}
   timeout: 1800.0
 cluster:
   n_nodes: 1
   n_gpus_per_node: 1
-  fileroot: .runs/agentm-rca-smoke
+  fileroot: .runs/dsh-rca-smoke
   name_resolve:
     type: nfs
-    nfs_record_root: .runs/agentm-rca-smoke/name_resolve
+    nfs_record_root: .runs/dsh-rca-smoke/name_resolve
 
 scheduler:
   type: local
@@ -131,9 +137,9 @@ sglang:
   context_length: 32768
   mem_fraction_static: 0.7
 
-# RL data — directly consumes AgentM's processed RCA dataset. Each
+# RL data — directly consumes the processed RCA dataset. Each
 # row carries {id/source, question, ground_truth, fault_type,
-# datapack_name}; AgentMWorkflow resolves data_dir by joining
+# datapack_name}; DshWorkflow resolves data_dir by joining
 # econfig.dataset_root with datapack_name. Default points
 # at the canonical workspace dataset; override with `-p
 # train_dataset.path=...` when pointing at a different jsonl.

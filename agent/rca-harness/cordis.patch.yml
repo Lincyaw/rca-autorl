@@ -1,0 +1,68 @@
+# Bundle layer for the RCA harness. `dsh plugin add` appends this package to the
+# profile's bundle list, so these rows compose after every `sdk-minimal` row and
+# override the ones they name. The scenario layer
+# (agent/profiles/<scenario>.patch.yml) applies after this one.
+
+# An RCA episode reads telemetry and answers; it never edits files and never
+# runs commands. Removing the shell and the editor is what makes the action
+# space the observability query interface rather than a machine: nothing is
+# left that could read the dataset the episode is scored against, so read
+# confinement is structural rather than a sandbox to be kept honest.
+- id: persistent-bash
+  disabled: true
+- id: terminal-bash
+  disabled: true
+- id: str-replace-editor
+  disabled: true
+
+# `sdk-minimal` mounts no context management at all: no token meter, no
+# compaction, so a long investigation runs until the serving window rejects the
+# request. These are the base bundle's own rows, added rather than inherited, so
+# the roster stays an allowlist — a later base-bundle addition cannot change
+# what this episode can do.
+#
+# `compaction-basic` compacts at `thresholdRatio` (0.8) of the MODEL's context
+# window, which `llm-deepseek` reads from $DSH_CONTEXT_WINDOW and otherwise
+# assumes is 1M. DshWorkflow sets that variable from `econfig.context_window`;
+# leave it unset only when the served window really is the harness default.
+- insert:
+    - id: token-meter
+      name: '@deepseek-ai/dsh-token-meter'
+    # `compaction-basic` with the RCA checkpoint template in place of its
+    # coding-assistant one: Files and Code / Errors and Fixes have nothing to
+    # hold here, while the SQL already run, the causal chain, and the open
+    # hypotheses have nowhere to go. Subclassing keeps the shipped region
+    # selection and checkpoint landing; only the instruction is ours.
+    - id: compaction
+      name: '@rca-autorl/dsh-rca-harness/compaction'
+    # Prunes old tool results before the conversation compactor runs.
+    # Threshold below the sql tool's maxChars (4000), so every non-trivial sql
+    # result is pruned on the next compaction pass. The model sees the full
+    # result on the step it arrives; by the next step the pruner shrinks it to
+    # a short head plus the "(saved to q{n}.tsv)" tail. The notebook carries
+    # the findings; the file carries the raw data.
+    - id: tool-result-pruner
+      name: '@rca-autorl/dsh-rca-harness/pruner'
+      config:
+        thresholdChars: 500
+        headChars: 200
+        tailChars: 120
+
+    - id: rca-harness
+      name: '@rca-autorl/dsh-rca-harness'
+      config:
+        # The SDK's `cwd` is the episode's snapshot, and the runtime subprocess
+        # starts there, exactly as `sdk-minimal` resolves its own file roots.
+        snapshot: !!js process.cwd()
+        # A result is bounded by rows, by total characters, and per cell: the
+        # episode's context is the scarce resource, and one unfiltered SELECT
+        # over trace spans is otherwise a 15 000-character tool result.
+        maxRows: 200
+        maxChars: 4000
+        maxCellChars: 200
+        # The notebook is enforced, not advised. `noteEvery` attaches a notice
+        # to the sql result — free, no turn spent. `noteLimit` refuses the next
+        # query outright, which is what bounds the unprunable tail the
+        # note-aware pruner protects.
+        noteEvery: 10
+        noteLimit: 20

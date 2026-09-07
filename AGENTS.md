@@ -1,21 +1,22 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/autorl/agent.py` is the direct AReaL workflow around AgentM, `verifier.py` owns RCA reward computation, and `train.py` / `train_sft.py` are the runnable RL and SFT entrypoints. SFT tokenization helpers live in `src/autorl/data/`. Training configs live in `configs/`, helper scripts in `scripts/`, and upstream AReaL code in `third_party/AReaL/`.
+`src/autorl/agent.py` is the direct AReaL workflow around DeepSeek Harness, `harness.py` installs the RCA harness bundle into a `dsh` profile, and `train.py` / `train_sft.py` are the runnable RL and SFT entrypoints. SFT tokenization helpers live in `src/autorl/data/`. `agent/` holds the RCA harness: the `dsh` bundle `agent/rca-harness` (plain ESM JavaScript, no build step; its one npm dependency is the DuckDB binding) and the scenario patches in `agent/profiles/`; `agent/README.md` is its design. Training configs live in `configs/`, helper scripts in `scripts/`, and upstream AReaL code in `third_party/AReaL/`.
 
 ## Build, Test, and Development Commands
 - `git submodule update --init --recursive` fetches the AReaL submodule.
 - `uv sync` installs the project and editable local dependencies into `.venv/`.
 - `./scripts/run_smoke.sh` runs the smoke training config with the repo venv on `PATH`.
-- `PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.train --config configs/train/agentm_rca_smoke.yaml` runs the RCA RL path.
+- `PATH="$PWD/.venv/bin:$PATH" python3 -m autorl.train --config configs/train/dsh_rca_smoke.yaml` runs the RCA RL path.
+- `python3 -m autorl.harness <dsh-home> [--reinstall]` installs the harness bundle into a profile (needs `pnpm` on `PATH`).
 - `./scripts/check.sh` runs the required Ruff lint/format and mypy checks.
 Rely on `third_party/AReaL/pyproject.toml` for shared runtime packages; avoid re-pinning AReaL-owned deps in the root project unless this repo adds a truly new requirement.
 
 ## Coding Style & Naming Conventions
-Use Python 3.12+ conventions: 4-space indentation, explicit type hints, and short modules. Keep the integration shaped like AReaL's SWE example: the external agent owns its loop and tools, while this repository only loads data, invokes the agent, computes reward, and launches training.
+Use Python 3.12+ conventions: 4-space indentation, explicit type hints, and short modules. Keep the integration shaped like AReaL's SWE example: DeepSeek Harness owns the agent loop, while this repository loads data, composes the harness, invokes the agent, computes reward, and launches training. Bundle code follows the harness's own extension contracts: register tools with `defineTool`, express policy as `tools/pre-execute` listeners or `ctx.tools.guard()`, and keep deployment-varying values in the row's config rather than in the source.
 
 ## Testing Guidelines
-Run `./scripts/check.sh` before every commit. The installed pre-commit hook enforces it locally, and CI repeats it on pushes and pull requests. Run `python -m unittest discover -s tests` for unit tests and `./scripts/run_smoke.sh` for an end-to-end GPU smoke run. Keep tests focused on the workflow boundary, dataset loading, verifier, and SFT masking.
+Run `./scripts/check.sh` before every commit. The installed pre-commit hook enforces it locally, and CI repeats it on pushes and pull requests. Run `python -m unittest discover -s tests` for unit tests and `./scripts/run_smoke.sh` for an end-to-end GPU smoke run. Keep tests focused on the workflow boundary, dataset loading, and SFT masking.
 
 ## Commit & Pull Request Guidelines
 The repository has no commit history yet, so use intent-first, imperative commit subjects. For repo-managed commits, follow the workspace Lore format with trailers such as `Constraint:`, `Rejected:`, `Confidence:`, and `Tested:`. Pull requests should explain why the change is needed, list touched configs or modules, note any submodule or dataset assumptions, and include the exact validation command or smoke-log snippet.

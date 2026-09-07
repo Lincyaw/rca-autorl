@@ -8,7 +8,7 @@
 #     sft-10case-2026-05-18/extractor.jsonl (190 rows, <think> + tool_calls)
 #
 # Overrides:
-#   AGENTM_RCA_DATASET_ROOT — only needed if you switch to a config that
+#   RCA_DATASET_ROOT — only needed if you switch to a config that
 #   feeds RL manifest rows that carry datapack_name instead of an
 #   absolute data_dir.
 #

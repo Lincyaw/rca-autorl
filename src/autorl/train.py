@@ -1,4 +1,4 @@
-"""AReaL GRPO/PPO launcher for the AgentM RCA workflow."""
+"""AReaL GRPO/PPO launcher for the DeepSeek Harness RCA workflow."""
 
 from __future__ import annotations
 
@@ -16,17 +16,19 @@ from autorl.algorithm import validate_areal_v2_rloo
 
 
 @dataclass
-class AgentMConfig:
+class DshConfig:
     scenario: str = "rca"
     model: str = "default"
     dataset_root: str = ""
-    max_turns: int = 128
+    dsh_home: str = ""
+    max_tokens: int = 4096
+    context_window: int = 0
     timeout: float = 1800.0
 
 
 @dataclass
 class RCAPPOConfig(PPOConfig):  # type: ignore[misc]  # AReaL has no py.typed marker
-    econfig: AgentMConfig = field(default_factory=AgentMConfig)
+    econfig: DshConfig = field(default_factory=DshConfig)
 
 
 def load_rca_dataset(path: str) -> Dataset:
@@ -61,9 +63,9 @@ def main(args: list[str]) -> None:
         valid_dataset=valid_dataset,
     ) as trainer:
         trainer.train(
-            workflow="autorl.agent.AgentMWorkflow",
+            workflow="autorl.agent.DshWorkflow",
             workflow_kwargs=workflow_kwargs,
-            eval_workflow="autorl.agent.AgentMWorkflow" if valid_dataset is not None else None,
+            eval_workflow="autorl.agent.DshWorkflow" if valid_dataset is not None else None,
             eval_workflow_kwargs=workflow_kwargs,
         )
 
