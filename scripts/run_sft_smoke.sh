@@ -2,10 +2,10 @@
 # Launch the RCA SFT smoke run.
 #
 # Defaults:
-#   - config: configs/sft/agentm_rca_sft_smoke.yaml
+#   - config: configs/sft/dsh_rca_sft_smoke.yaml
 #       (Qwen3-4B-Thinking-2507, max_length=32768)
-#   - train_dataset.path: ../AgentM/contrib/extensions/llmharness/runs/
-#     sft-10case-2026-05-18/extractor.jsonl (190 rows, <think> + tool_calls)
+#   - train_dataset.path: .runs/sft/rca_sessions.jsonl, exported from a
+#     Harness home with `python3 -m autorl.data.export <dsh-home> <out.jsonl>`
 #
 # Overrides:
 #   RCA_DATASET_ROOT — only needed if you switch to a config that
@@ -23,7 +23,7 @@ cd "$ROOT_DIR"
 # AReaL worker subprocesses call ``python3`` — put the project venv first.
 export PATH="$ROOT_DIR/.venv/bin:$PATH"
 
-CONFIG="${SFT_CONFIG:-configs/sft/agentm_rca_sft_smoke.yaml}"
+CONFIG="${SFT_CONFIG:-configs/sft/dsh_rca_sft_smoke.yaml}"
 
 if [[ ! -f "$CONFIG" ]]; then
   echo "config not found: $CONFIG" >&2

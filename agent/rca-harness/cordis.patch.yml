@@ -35,6 +35,12 @@
     # selection and checkpoint landing; only the instruction is ours.
     - id: compaction
       name: '@rca-autorl/dsh-rca-harness/compaction'
+      config:
+        # The prompt at the threshold plus the generation cap must fit the
+        # serving window: the shipped 0.8 leaves only 20% for output, which is
+        # 6.5k at a 32k window and less than one FPG submission under high
+        # reasoning effort. 0.6 x 32768 + 8192 max_tokens = 27.9k, inside 32k.
+        thresholdRatio: 0.6
     # Prunes old tool results before the conversation compactor runs.
     # Threshold below the sql tool's maxChars (4000), so every non-trivial sql
     # result is pruned on the next compaction pass. The model sees the full
@@ -54,6 +60,11 @@
         # The SDK's `cwd` is the episode's snapshot, and the runtime subprocess
         # starts there, exactly as `sdk-minimal` resolves its own file roots.
         snapshot: !!js process.cwd()
+        # Saved query results live in the Harness home, never in the snapshot:
+        # the snapshot is the shared dataset directory every rollout of a case
+        # replays, and a group of concurrent episodes would overwrite each
+        # other there.
+        resultRoot: !!js dshHomePath('rca-results')
         # A result is bounded by rows, by total characters, and per cell: the
         # episode's context is the scarce resource, and one unfiltered SELECT
         # over trace spans is otherwise a 15 000-character tool result.

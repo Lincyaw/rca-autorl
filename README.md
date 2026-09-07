@@ -29,6 +29,7 @@ DshWorkflow ──▶ DeepSeekHarness SDK ──▶ dsh runtime subprocess
 - `src/autorl/train.py`: JSONL loading plus `PPOTrainer` launch.
 - `src/autorl/train_sft.py`: `SFTTrainer` launch for distilled RCA trajectories.
 - `src/autorl/data/sft.py`: chat-template rendering and assistant-only loss masks.
+- `src/autorl/data/export.py`: turns `dsh` session logs into SFT rows.
 - `configs/train/dsh_rca_smoke.yaml`: one-GPU RCA RL smoke config.
 - `configs/sft/`: SFT configs for distilled trajectories.
 
@@ -95,12 +96,20 @@ score.
 
 ## SFT
 
-SFT consumes JSON/JSONL exported from the distillation tooling. Prompt tokens and
-tool responses are masked; assistant reasoning and tool calls are supervised.
+SFT consumes the sessions the RL rollouts already wrote. Export a Harness home to
+the row format first, then train on it; prompt tokens and tool responses are
+masked, while assistant reasoning and tool calls are supervised.
 
 ```bash
+python -m autorl.data.export .runs/dsh-rca-smoke/dsh-home .runs/sft/rca_sessions.jsonl
 ./scripts/run_sft_smoke.sh
 ```
+
+The exporter follows the session's final surface, so a compacted episode exports
+the checkpoint the model actually had rather than the superseded originals, and
+it pairs tool calls to their results by call id rather than by log order. A long
+RCA episode is long: one 210-message session tokenizes to ~150k tokens, past any
+training window, so `train_dataset.max_length` decides what survives.
 
 Override the dataset or model with normal AReaL config patches:
 

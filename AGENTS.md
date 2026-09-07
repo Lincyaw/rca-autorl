@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/autorl/agent.py` is the direct AReaL workflow around DeepSeek Harness, `harness.py` installs the RCA harness bundle into a `dsh` profile, and `train.py` / `train_sft.py` are the runnable RL and SFT entrypoints. SFT tokenization helpers live in `src/autorl/data/`. `agent/` holds the RCA harness: the `dsh` bundle `agent/rca-harness` (plain ESM JavaScript, no build step; its one npm dependency is the DuckDB binding) and the scenario patches in `agent/profiles/`; `agent/README.md` is its design. Training configs live in `configs/`, helper scripts in `scripts/`, and upstream AReaL code in `third_party/AReaL/`.
+`src/autorl/agent.py` is the direct AReaL workflow around DeepSeek Harness, `harness.py` installs the RCA harness bundle into a `dsh` profile, and `train.py` / `train_sft.py` are the runnable RL and SFT entrypoints. SFT tokenization and the session-to-SFT exporter live in `src/autorl/data/`. `agent/` holds the RCA harness: the `dsh` bundle `agent/rca-harness` (plain ESM JavaScript, no build step; its one npm dependency is the DuckDB binding) and the scenario patches in `agent/profiles/`; `agent/README.md` is its design. Training configs live in `configs/`, helper scripts in `scripts/`, and upstream AReaL code in `third_party/AReaL/`.
 
 ## Build, Test, and Development Commands
 - `git submodule update --init --recursive` fetches the AReaL submodule.

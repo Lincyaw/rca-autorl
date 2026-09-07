@@ -33,7 +33,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         config = econfig or {}
         self.scenario = str(config.get("scenario") or "rca")
         self.model = str(config.get("model") or "default")
-        self.max_tokens = int(config.get("max_tokens") or 4096)
+        self.max_tokens = int(config.get("max_tokens") or 8192)
         self.context_window = int(config.get("context_window") or 0)
         self.timeout = float(config.get("timeout") or 1800.0)
         self.dataset_root = str(config.get("dataset_root") or os.getenv("RCA_DATASET_ROOT") or "")

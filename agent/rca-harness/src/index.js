@@ -31,17 +31,20 @@ export function apply(ctx, config = {}) {
   }
   const snapshot = String(config.snapshot ?? '').trim()
   if (snapshot.length === 0) throw new Error('rca-harness: snapshot must be a non-empty path')
+  const resultRoot = String(config.resultRoot ?? '').trim()
+  if (resultRoot.length === 0) throw new Error('rca-harness: resultRoot must be a non-empty path')
 
   // Episode state, keyed by the calling agent so one runtime can serve several
   // sessions. Everything here lives and dies with this plugin's fiber.
   const state = {
     snapshot,
+    resultRoot,
     snapshots: new Map(),
     submitted: new Set(),
     key: exec => exec.agent?.id ?? 'root',
   }
 
-  trace('apply', { snapshot, ...limits, noteEvery, noteLimit, notePolicy: config.notePolicy !== false })
+  trace('apply', { snapshot, resultRoot, ...limits, noteEvery, noteLimit, notePolicy: config.notePolicy !== false })
   registerSqlTool(ctx, state, limits)
   registerNotebook(ctx, state)
   if (config.notePolicy !== false) registerNotePolicy(ctx, state, noteEvery, noteLimit)

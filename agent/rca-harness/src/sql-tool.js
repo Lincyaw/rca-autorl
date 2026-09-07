@@ -79,16 +79,24 @@ function renderTable(value) {
 
 /**
  * Save the full result to a TSV file so it survives context compaction.
- * Returns the file path relative to the results directory.
+ * Returns the file name, which is what the model-facing tail cites.
+ *
+ * The file goes under `resultRoot`, never under the snapshot. The snapshot is
+ * the shared dataset directory a training run replays for every rollout of that
+ * case: writing there mutates the dataset, breaks the read-only property the
+ * whole tool roster exists to guarantee, and — with a group of 8 episodes on
+ * one case — has every episode overwrite the others' `q1.tsv`. Keyed by the
+ * calling agent so concurrent sessions in one runtime keep separate counters
+ * and separate directories.
  */
-function saveResultFile(state, value, statement) {
-  const key = state.key({ agent: { id: 'root' } })
+function saveResultFile(state, exec, value, statement) {
+  const key = state.key(exec)
   if (!state.resultDirs) state.resultDirs = new Map()
   if (!state.resultCounters) state.resultCounters = new Map()
 
   let dir = state.resultDirs.get(key)
   if (!dir) {
-    dir = join(state.snapshot, '.sql_results')
+    dir = join(state.resultRoot, key)
     mkdirSync(dir, { recursive: true })
     state.resultDirs.set(key, dir)
   }
@@ -190,7 +198,7 @@ export function registerSqlTool(ctx, state, limits) {
 
       // Save to file and track for compaction by take_note.
       if (matched.length > 0) {
-        const { filename } = saveResultFile(state, result, statement)
+        const { filename } = saveResultFile(state, exec, result, statement)
         result.result_file = filename
         state.pendingResults.push({
           statement,

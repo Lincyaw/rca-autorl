@@ -1,4 +1,4 @@
-experiment_name: autorl-agentm-rca-sft-smoke
+experiment_name: autorl-dsh-rca-sft-smoke
 trial_name: local-smoke
 
 seed: 1
@@ -12,10 +12,10 @@ scheduler:
 cluster:
   n_nodes: 1
   n_gpus_per_node: 1
-  fileroot: .runs/agentm-rca-sft-smoke
+  fileroot: .runs/dsh-rca-sft-smoke
   name_resolve:
     type: nfs
-    nfs_record_root: .runs/agentm-rca-sft-smoke/name_resolve
+    nfs_record_root: .runs/dsh-rca-sft-smoke/name_resolve
 
 # Distill output from llmharness — extractor.jsonl carries 190 rows of
 # {input.{system,user}, target.messages[<think>...</think> + tool_calls]}
@@ -24,7 +24,7 @@ cluster:
 # pointing at a different distill output.
 train_dataset:
   type: sft
-  path: ../AgentM/contrib/extensions/llmharness/runs/sft-10case-2026-05-18/extractor.jsonl
+  path: .runs/sft/rca_sessions.jsonl
   batch_size: 1
   shuffle: true
   pin_memory: false
@@ -33,7 +33,7 @@ train_dataset:
 
 valid_dataset:
   type: sft
-  path: ../AgentM/contrib/extensions/llmharness/runs/sft-10case-2026-05-18/extractor.jsonl
+  path: .runs/sft/rca_sessions.jsonl
   batch_size: 1
   shuffle: false
   pin_memory: false

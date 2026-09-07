@@ -21,7 +21,7 @@ class DshConfig:
     model: str = "default"
     dataset_root: str = ""
     dsh_home: str = ""
-    max_tokens: int = 4096
+    max_tokens: int = 8192
     context_window: int = 0
     timeout: float = 1800.0
 
