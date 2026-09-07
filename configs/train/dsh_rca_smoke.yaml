@@ -10,7 +10,6 @@ tokenizer_path: ${actor.path}
 
 econfig:
   scenario: rca
-  model: default
   dataset_root: ${oc.env:RCA_DATASET_ROOT,""}
   dsh_home: ${cluster.fileroot}/dsh-home
   # Per-request output cap sent to the rollout proxy; must stay below

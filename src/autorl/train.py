@@ -4,29 +4,16 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from areal import PPOTrainer
-from areal.api.cli_args import PPOConfig, load_expr_config
+from areal.api.cli_args import load_expr_config
 from datasets import Dataset
 
 from autorl.algorithm import validate_areal_v2_rloo
-
-
-@dataclass
-class DshConfig:
-    scenario: str = "rca"
-    model: str = "default"
-    dataset_root: str = ""
-    dsh_home: str = ""
-    timeout: float = 1800.0
-
-
-@dataclass
-class RCAPPOConfig(PPOConfig):  # type: ignore[misc]  # AReaL has no py.typed marker
-    econfig: DshConfig = field(default_factory=DshConfig)
+from autorl.config import RCAPPOConfig
 
 
 def load_rca_dataset(path: str) -> Dataset:
@@ -53,12 +40,14 @@ def main(args: list[str]) -> None:
     valid_dataset = (
         load_rca_dataset(config.valid_dataset.path) if config.valid_dataset is not None else None
     )
-    # The generation cap and the serving window are AReaL's to declare, not
-    # ours to duplicate: gconfig.max_new_tokens is what the harness sends as the
-    # request's `max_tokens`, and sglang.context_length is the window compaction
-    # must trigger below. Passing them through keeps one number per concept.
+    # The served model name and the generation limits are AReaL's to declare,
+    # not ours to duplicate: rollout.model is the name the gateway routes on,
+    # gconfig.max_new_tokens is what the harness sends as the request's
+    # `max_tokens`, and sglang.context_length is the window compaction must
+    # trigger below. Passing them through keeps one number per concept.
     econfig: dict[str, Any] = {
         **asdict(config.econfig),
+        "model": str(config.rollout.model),
         "max_tokens": int(config.gconfig.max_new_tokens),
         "context_window": int(config.sglang.context_length or config.gconfig.max_tokens),
     }
