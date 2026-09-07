@@ -1,5 +1,8 @@
 # An OpenAI-compatible gateway as a model route.
 #
+# Both paths layer this: SFT collection points it at a teacher endpoint,
+# rollout points it at AReaL's proxy. Same composition, one endpoint each.
+#
 # `sdk-minimal` registers exactly one LLM adapter, `deepseek-official`
 # (`llm-deepseek`), which speaks DeepSeek's own wire dialect. Pointing it at a
 # gateway by `base_url` alone works only as long as the gateway's stream is
@@ -24,10 +27,10 @@
       config:
         providers:
           gateway:
-            displayName: !!js process.env.RCA_TEACHER_BASE_URL
-            apiKeyEnv: RCA_TEACHER_API_KEY
+            displayName: !!js process.env.RCA_GATEWAY_BASE_URL
+            apiKeyEnv: RCA_GATEWAY_API_KEY
             api: openai-completions
-            baseURL: !!js process.env.RCA_TEACHER_BASE_URL
+            baseURL: !!js process.env.RCA_GATEWAY_BASE_URL
             models:
-              - id: !!js process.env.RCA_TEACHER_MODEL
+              - id: !!js process.env.RCA_GATEWAY_MODEL
                 contextWindow: !!js Number(process.env.DSH_CONTEXT_WINDOW ?? 262144)

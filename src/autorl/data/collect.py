@@ -1,20 +1,17 @@
 """Run RCA cases through DeepSeek Harness against a teacher model, for SFT.
 
-The RL path gets its model from AReaL's rollout proxy; SFT distillation has no
-proxy, so this entrypoint points the same harness composition — `sdk-minimal`
-plus the `agent/rca-harness` bundle and the scenario patch — at a teacher
-endpoint instead. Every episode writes an ordinary `dsh` session under one
-Harness home, which is exactly what `autorl.data.export` already reads.
+A rollout gets its model from AReaL's proxy; distillation has no proxy, so this
+entrypoint aims the same composition at a teacher endpoint. Same profile, same
+bundle, same scenario layer, same model route — `autorl.harness.model_route`
+composes it for both, and only the endpoint differs. Every episode writes an
+ordinary `dsh` session under one Harness home, which is exactly what
+`autorl.data.export` already reads.
 
-    export RCA_TEACHER_BASE_URL=... RCA_TEACHER_API_KEY=...
+    export RCA_GATEWAY_BASE_URL=... RCA_GATEWAY_API_KEY=...
     python -m autorl.data.collect <manifest.jsonl> <dsh-home> --limit 10
     python -m autorl.data.export <dsh-home> <out.jsonl>
 
-A gateway is reached as a *route*, not as a `base_url` override: `--base-url`
-layers `agent/profiles/openai-gateway.patch.yml`, which mounts the shipped
-`llm-pi-ai` adapter and declares one `openai-completions` route from the same
-environment variables. That layer's header says why the base_url override is
-not enough. With no `--base-url` the episode runs on `sdk-minimal`'s own
+With no `--base-url` the episode runs on `sdk-minimal`'s own
 `deepseek-official` route, which reads `DEEPSEEK_API_KEY` and serves only that
 catalog's model ids.
 
@@ -32,17 +29,12 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
-from deepseek_harness import DeepSeekHarness
+from typing import Any, cast
 
 from autorl.agent import resolve_data_dir, submitted_result
 from autorl.data.samples import load_manifest_samples
-from autorl.harness import PROFILE, require_bundle, scenario_patch
-
-GATEWAY_SCENARIO = "openai-gateway"
-GATEWAY_ROUTE = "gateway"
-DEEPSEEK_ROUTE = "deepseek-official"
+from autorl.harness import ModelRoute, model_route, require_bundle, run_episode
+from autorl.interfaces import RCASample
 
 
 @dataclass
@@ -56,41 +48,11 @@ class Episode:
     error: str = ""
 
 
-@dataclass
-class Teacher:
-    """The endpoint an episode runs against, in the form the harness takes it."""
-
-    model: str
-    provider: str
-    patches: tuple[str, ...]
-    env: dict[str, str]
-
-
-def teacher(scenario: str, model: str, base_url: str, api_key: str, context_window: int) -> Teacher:
-    """Compose the model route: a declared gateway route, or the shipped one."""
-    env = {"DSH_CONTEXT_WINDOW": str(context_window)}
-    patches = (scenario_patch(scenario),)
-    if not base_url:
-        return Teacher(model, DEEPSEEK_ROUTE, patches, env)
-    return Teacher(
-        model,
-        GATEWAY_ROUTE,
-        (*patches, scenario_patch(GATEWAY_SCENARIO)),
-        # The route reads these; the patch holds no literal of its own.
-        {
-            **env,
-            "RCA_TEACHER_BASE_URL": base_url,
-            "RCA_TEACHER_API_KEY": api_key,
-            "RCA_TEACHER_MODEL": model,
-        },
-    )
-
-
 def collect_case(
     sample: dict[str, Any],
     *,
     dsh_home: Path,
-    teacher: Teacher,
+    route: ModelRoute,
     max_tokens: int,
     timeout: float,
     dataset_root: str,
@@ -101,18 +63,16 @@ def collect_case(
         raise ValueError(f"case {case_id} has no question/incident")
     session_id = f"case{case_id}-{uuid.uuid4().hex[:8]}"
     try:
-        with DeepSeekHarness(
-            dsh_home=str(dsh_home),
-            profile=PROFILE,
-            patches=teacher.patches,
-            provider=teacher.provider,
-            cwd=resolve_data_dir(sample, dataset_root),  # type: ignore[arg-type]
-            model=teacher.model,
+        result = run_episode(
+            dsh_home=dsh_home,
+            route=route,
+            # A manifest row is untyped JSON until it is read as one.
+            cwd=resolve_data_dir(cast(RCASample, sample), dataset_root),
+            prompt=incident,
+            session_id=session_id,
             max_tokens=max_tokens,
-            env=teacher.env,
-            request_timeout_seconds=timeout,
-        ) as harness:
-            result = harness.run(incident, session_id=session_id)
+            timeout=timeout,
+        )
     except Exception as error:  # one failed case must not lose the rest of the batch
         return Episode(case_id, session_id, "error", False, f"{type(error).__name__}: {error}")
     return Episode(
@@ -127,8 +87,8 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--limit", type=int, default=0, help="first N cases (0 = all)")
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--model", default="DeepSeek-V4-pro")
-    parser.add_argument("--base-url", default=os.getenv("RCA_TEACHER_BASE_URL", ""))
-    parser.add_argument("--api-key", default=os.getenv("RCA_TEACHER_API_KEY", ""))
+    parser.add_argument("--base-url", default=os.getenv("RCA_GATEWAY_BASE_URL", ""))
+    parser.add_argument("--api-key", default=os.getenv("RCA_GATEWAY_API_KEY", ""))
     parser.add_argument("--scenario", default="rca")
     parser.add_argument("--concurrency", type=int, default=1)
     # Mirror the limits the student is actually served under, so the teacher
@@ -149,14 +109,20 @@ def main(argv: list[str]) -> None:
     if args.limit:
         samples = samples[: args.limit]
     dataset_root = args.dataset_root or str(Path(args.manifest).expanduser().resolve().parent)
-    route = teacher(args.scenario, args.model, args.base_url, args.api_key, args.context_window)
+    route = model_route(
+        scenario=args.scenario,
+        model=args.model,
+        base_url=args.base_url,
+        api_key=args.api_key,
+        context_window=args.context_window,
+    )
     print(f"teacher: provider={route.provider} model={route.model} {args.base_url}", flush=True)
 
     def run(sample: dict[str, Any]) -> Episode:
         episode = collect_case(
             sample,
             dsh_home=dsh_home,
-            teacher=route,
+            route=route,
             max_tokens=args.max_tokens,
             timeout=args.timeout,
             dataset_root=dataset_root,

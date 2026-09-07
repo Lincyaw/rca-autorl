@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any, Unpack
 
 from areal.utils import logging
-from deepseek_harness import DeepSeekHarness, RunResult
+from deepseek_harness import RunResult
 
-from autorl.harness import PROFILE, require_bundle, scenario_patch
+from autorl.harness import model_route, require_bundle, run_episode, scenario_patch
 from autorl.interfaces import (
     AReaLAgentWorkflow,
     AReaLRunOptions,
@@ -43,7 +43,7 @@ class DshWorkflow(AReaLAgentWorkflow):
             .expanduser()
             .resolve()
         )
-        self.patch = scenario_patch(self.scenario)
+        scenario_patch(self.scenario)  # fail at construction, not mid-rollout
         require_bundle(self.dsh_home)
 
     async def run(
@@ -70,21 +70,27 @@ class DshWorkflow(AReaLAgentWorkflow):
         return 0.0
 
     def _run_episode(self, incident: str, data_dir: str, base_url: str, api_key: str) -> RunResult:
-        with DeepSeekHarness(
-            dsh_home=str(self.dsh_home),
-            profile=PROFILE,
-            patches=(self.patch,),
-            cwd=data_dir,
+        # AReaL's proxy is reached as a declared route, the same way the SFT
+        # collector reaches a teacher endpoint; `model_route` says why a
+        # `base_url` override is not enough. The route also carries
+        # DSH_CONTEXT_WINDOW, which is what compaction triggers below and which
+        # the harness otherwise assumes is 1M.
+        route = model_route(
+            scenario=self.scenario,
             model=self.model,
-            max_tokens=self.max_tokens,
             base_url=base_url,
             api_key=api_key,
-            # Compaction triggers at a fraction of the model's context window,
-            # which the harness assumes is 1M unless told the serving limit.
-            env=({"DSH_CONTEXT_WINDOW": str(self.context_window)} if self.context_window else {}),
-            request_timeout_seconds=self.timeout,
-        ) as harness:
-            return harness.run(incident, session_id=f"rca-{uuid.uuid4().hex}")
+            context_window=self.context_window,
+        )
+        return run_episode(
+            dsh_home=self.dsh_home,
+            route=route,
+            cwd=data_dir,
+            prompt=incident,
+            session_id=f"rca-{uuid.uuid4().hex}",
+            max_tokens=self.max_tokens,
+            timeout=self.timeout,
+        )
 
 
 def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:

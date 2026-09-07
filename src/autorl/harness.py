@@ -1,4 +1,10 @@
-"""Installing the repo-owned RCA harness bundle into a DeepSeek Harness profile.
+"""Composing a launch: the harness bundle, the scenario layer, the model route.
+
+Everything that decides what a `dsh` episode *is* lives here, so a rollout and
+an SFT collection cannot compose it differently. They differ in where the
+endpoint points and what they do with the result; `run_episode` is the one
+place the runtime is constructed, and `model_route` the one place an endpoint
+becomes a route.
 
 `agent/rca-harness` is a `dsh` bundle: `dsh plugin add` records it in the
 profile's `package.json`, and its own `cordis.patch.yml` inserts the row that
@@ -13,12 +19,103 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+
+from deepseek_harness import DeepSeekHarness, RunResult
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUNDLE_DIR = REPO_ROOT / "agent" / "rca-harness"
 BUNDLE_NAME = "@rca-autorl/dsh-rca-harness"
 PROFILE = "sdk-minimal"
+
+GATEWAY_SCENARIO = "openai-gateway"
+GATEWAY_ROUTE = "gateway"
+DEEPSEEK_ROUTE = "deepseek-official"
+
+
+@dataclass(frozen=True)
+class ModelRoute:
+    """How one launch reaches its model: the adapter, the layers, the environment."""
+
+    provider: str
+    model: str
+    patches: tuple[str, ...]
+    env: dict[str, str]
+
+
+def model_route(
+    *,
+    scenario: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    context_window: int = 0,
+) -> ModelRoute:
+    """The scenario layer, plus a declared gateway route when an endpoint is given.
+
+    An endpoint is not reached by overriding `base_url` on the shipped
+    `deepseek-official` adapter. That adapter speaks DeepSeek's own dialect and
+    carries a streamed tool call's id and name across deltas with an
+    `!== undefined` guard, so any endpoint that spells "no id in this delta" as
+    `null` or `""` erases them and the step fails as `Error: unknown tool ""`
+    with its arguments intact. sglang writes those fields as an explicit `null`
+    on every argument delta and AReaL's gateway forwards the stream verbatim, so
+    a rollout hits this on every tool call whose arguments span more than one
+    chunk — silently, since a failed call still finishes the episode.
+
+    `agent/profiles/openai-gateway.patch.yml` declares the endpoint as an
+    `llm-pi-ai` route instead, whose `openai-completions` protocol is the OpenAI
+    dialect proper. Collection and rollout compose the same way; only the
+    endpoint differs.
+    """
+    env = {"DSH_CONTEXT_WINDOW": str(context_window)} if context_window else {}
+    patches = (scenario_patch(scenario),)
+    if not base_url:
+        return ModelRoute(DEEPSEEK_ROUTE, model, patches, env)
+    return ModelRoute(
+        GATEWAY_ROUTE,
+        model,
+        (*patches, scenario_patch(GATEWAY_SCENARIO)),
+        {
+            **env,
+            "RCA_GATEWAY_BASE_URL": base_url,
+            "RCA_GATEWAY_API_KEY": api_key,
+            "RCA_GATEWAY_MODEL": model,
+        },
+    )
+
+
+def run_episode(
+    *,
+    dsh_home: Path,
+    route: ModelRoute,
+    cwd: str,
+    prompt: str,
+    session_id: str,
+    max_tokens: int,
+    timeout: float,
+) -> RunResult:
+    """One episode, launched the one way both a rollout and a collection use.
+
+    The two callers differ in where the endpoint points and what they do with
+    the result, never in how the runtime is composed. Keeping the constructor
+    in one place is what makes that true: the last time it lived at both call
+    sites they drifted, one passing `base_url` against the shipped adapter
+    while the other declared a route.
+    """
+    with DeepSeekHarness(
+        dsh_home=str(dsh_home),
+        profile=PROFILE,
+        patches=route.patches,
+        provider=route.provider,
+        cwd=cwd,
+        model=route.model,
+        max_tokens=max_tokens,
+        env=route.env,
+        request_timeout_seconds=timeout,
+    ) as harness:
+        return harness.run(prompt, session_id=session_id)
 
 
 def scenario_patch(scenario: str) -> str:

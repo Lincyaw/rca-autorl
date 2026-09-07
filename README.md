@@ -20,7 +20,8 @@ DshWorkflow ──▶ DeepSeekHarness SDK ──▶ dsh runtime subprocess
 ## What lives here
 
 - `src/autorl/agent.py`: direct AReaL workflow around the public `DeepSeekHarness` SDK.
-- `src/autorl/harness.py`: installs the RCA harness bundle into a `dsh` profile.
+- `src/autorl/harness.py`: composes a launch — bundle install, scenario layer,
+  model route, and the one `dsh` runtime construction both paths use.
 - `agent/`: the RCA harness — the `dsh` bundle that replaces the shell with a
   bounded DuckDB `sql` tool over the snapshot, an investigation notebook, and
   the terminal `submit_result`, plus the RCA scenario patch and the gateway
@@ -82,15 +83,29 @@ export RCA_DATASET_ROOT=/path/to/rca
   -p valid_dataset.path=$RCA_DATASET_ROOT/data.jsonl
 ```
 
-For every rollout, AReaL passes a proxy URL and session API key to `DshWorkflow`. The
-workflow launches one `dsh` runtime whose `DEEPSEEK_BASE_URL` and `DEEPSEEK_API_KEY` are
-those values, runs the incident as a single session in the case's snapshot directory, and
-returns one scalar reward in the format expected by AReaL v2. The runtime posts
-OpenAI-compatible `POST {base_url}/chat/completions` requests, so the proxy records the
-whole trajectory. Generation limits stay AReaL's: `gconfig.max_new_tokens` becomes the
-request's `max_tokens` (the harness default is 256k, which the inference worker would
-reject) and `sglang.context_length` becomes the window compaction triggers below.
-`train.py` passes both into the workflow, so neither is declared twice.
+For every rollout, AReaL passes a proxy URL and session API key to `DshWorkflow`.
+The workflow declares that endpoint as a model route, launches one `dsh` runtime for
+the incident in the case's snapshot directory, and returns one scalar reward in the
+format expected by AReaL v2. The proxy sees OpenAI-compatible
+`POST {base_url}/chat/completions` requests, so it records the whole trajectory.
+
+The route matters. `sdk-minimal` registers only the shipped `deepseek-official`
+adapter, which carries a streamed tool call's id and name across deltas with an
+`!== undefined` guard. sglang writes both as an explicit `null` on every argument
+delta (`serving_chat.py`: "Subsequent chunks: null ID and name for argument deltas",
+serialized without `exclude_none`) and AReaL's gateway forwards the stream verbatim,
+so the guard passes and the id and name the first delta established are erased. The
+call then fails as `Error: unknown tool ""` with its arguments intact — and the model
+retries, forever: against a replay of that stream the shipped adapter produced 4530
+calls, every name empty, not one submission. `autorl.harness.model_route` declares
+the endpoint as an `llm-pi-ai` route instead, whose `openai-completions` protocol is
+the OpenAI dialect proper; the same replay then yields `sql, sql, submit_result`. SFT
+collection composes through the same function, so the two paths cannot drift.
+
+Generation limits stay AReaL's: `rollout.model` is the served name the route declares,
+`gconfig.max_new_tokens` becomes the request's `max_tokens`, and `sglang.context_length`
+becomes the window compaction triggers below. `train.py` passes all three into the
+workflow, so none is declared twice.
 
 Reward is temporarily fixed at `0.0`. The verifier and reward design will be added later;
 until then the training entry exercises rollout plumbing but produces no policy-gradient
@@ -106,21 +121,16 @@ harness composition at a served model instead of AReaL's rollout proxy. Export
 the Harness home it fills, then train on it.
 
 ```bash
-export RCA_TEACHER_BASE_URL=... RCA_TEACHER_API_KEY=...
+export RCA_GATEWAY_BASE_URL=... RCA_GATEWAY_API_KEY=...
 python -m autorl.data.collect $RCA_DATASET_ROOT/data.jsonl .runs/sft-collect/dsh-home \
   --limit 10 --concurrency 5
 python -m autorl.data.export .runs/sft-collect/dsh-home .runs/sft/rca_sessions.jsonl
 ./scripts/run_sft_smoke.sh
 ```
 
-`--base-url` layers `agent/profiles/openai-gateway.patch.yml`, which mounts the
-shipped `llm-pi-ai` adapter and declares one `openai-completions` route. That
-layer, not a `base_url` override, is what makes a gateway usable: `sdk-minimal`
-registers only the `deepseek-official` adapter, which carries a streamed tool
-call's id and name across deltas with an `!== undefined` guard, so a gateway
-that spells "no id here" as `null` or `""` erases them and the step fails as
-`Error: unknown tool ""`. Without `--base-url` the episode runs on that shipped
-route, which reads `DEEPSEEK_API_KEY`.
+`--base-url` takes the same route the rollout takes — see the RL section for why
+an endpoint is declared rather than overridden. Without it the episode runs on
+`sdk-minimal`'s own `deepseek-official` route, which reads `DEEPSEEK_API_KEY`.
 
 The exporter writes the conversation the teacher actually held — the session's
 final surface, folded the way the harness folds it, plus the tool schemas it was
