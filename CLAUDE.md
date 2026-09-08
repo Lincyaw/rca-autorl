@@ -38,6 +38,7 @@ harness 工具据此在提交时就拒收不合契约的答案；
 - 主线 idea：`paper/ideas/triadic-self-play/v0-overview.md` 及同目录下 4 个 v1 子 idea；索引 `paper/ideas/INDEX.md`
 - 主线高层架构：v0-overview 指明 4 个主线 agent = **RCA / FI / Verifier / Controller**
 - 训练流程：`.doc/designs/training-pipeline.md`（Stage 0/1/2/3 训练过程轴，与下方 Phase 北极星正交）
+- RL reward 建模：`.doc/designs/rl-reward.md`（一个真实 case 的完整计算过程）
 - 角色与指标 spec：`.doc/designs/agent-roles-spec.md`（角色定义 §2、reward 与指标定义 §5；Verifier ≡ 旧 spec 的 Verification Agent）。代码结构见 `README.md` 与 `agent/README.md`
 - 当前进度：Phase 1 RCA 基线（早期）
 - 平行研究线（正交于主线，主线通后启动）：
