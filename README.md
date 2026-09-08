@@ -203,8 +203,13 @@ the sidecar's agent-request count does not match the log's, the mapping is
 refused whole and the outcome falls back to the last turn: crediting the wrong
 turn is worse than crediting none.
 
-Not yet wired: `autorl.advantage` computes the maths and is tested, but
-`PPOActor.compute_advantages` still has to be subclassed to use it.
+`autorl.trainer` is the plumbing: `RcaPPOActor` reads the rewards before AReaL
+scales them, lets the base method build every other field it owns, and
+substitutes the advantage; `RcaPPOTrainer` swaps that actor into the engine the
+trainer builds. `actor.reward_norm` and `actor.adv_norm` are both null in the
+config and `autorl.algorithm` refuses a run where they are not — either one
+would centre a turn against the rest of its own episode and cancel the
+comparison, once before and once after.
 
 Generation limits stay AReaL's: `rollout.model` is the served name the route declares,
 `gconfig.max_new_tokens` becomes the request's `max_tokens`, and `sglang.context_length`

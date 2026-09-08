@@ -93,11 +93,11 @@ actor:
   reward_scaling: 1.0
   reward_bias: 0.0
   reward_clip: 5.0
-  reward_norm:
-    mean_level: group
-    mean_leave1out: true
-    std_level: null
-    group_size: ${gconfig.n_samples}
+  # Both null on purpose: autorl.advantage computes the leave-one-out baseline
+  # across the samples of a prompt and the per-turn credit within an episode.
+  # AReaL's group here is one rollout's turns, so either of these would centre a
+  # turn against the rest of its own episode and cancel that comparison.
+  reward_norm: null
   adv_norm: null
   discount: 1.0
   gae_lambda: 1.0

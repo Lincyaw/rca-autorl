@@ -70,3 +70,29 @@ class CreditAxisTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BatchGroupingTest(unittest.TestCase):
+    """The actor's only job: find the trajectories in a flat batch."""
+
+    def rows(self, rewards: list[float], sizes: list[int], group_size: int) -> list[float]:
+        from autorl.trainer import RcaPPOActor
+
+        actor = RcaPPOActor.__new__(RcaPPOActor)
+        actor.group_size = group_size
+        return actor._rca_advantages(rewards, sizes)
+
+    def test_consecutive_trajectories_are_samples_of_one_prompt(self) -> None:
+        rows = self.rows([1.2, 0.8, 0.0, 0.0], [2, 2], group_size=2)
+        self.assertEqual([round(x, 3) for x in rows], [1.2, 0.8, -1.0, -1.0])
+
+    def test_a_second_prompt_gets_its_own_baseline(self) -> None:
+        rows = self.rows([1.0, 1.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.5], [2, 2, 2, 2], group_size=2)
+        self.assertEqual([round(x, 3) for x in rows[:4]], [1.0, 1.0, -1.0, -1.0])
+        for value in rows[4:]:
+            self.assertAlmostEqual(value, 0.0)
+
+    def test_trajectories_of_different_lengths_still_line_up(self) -> None:
+        """Episodes stop at different turns; the slices must follow the sizes."""
+        rows = self.rows([1.0, 1.0, 1.0, 0.0], [3, 1], group_size=2)
+        self.assertEqual([round(x, 3) for x in rows], [1.0, 1.0, 1.0, -1.0])
