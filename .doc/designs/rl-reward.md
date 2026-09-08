@@ -112,27 +112,7 @@ Under a flat score the two are worth the same, so the cheaper strategy wins on
 cost: sweep the easy entities, never attempt the expensive one. That is a
 policy the flat reward would actively train.
 
-## 9. What is deliberately absent
-
-**No process supervision.** Nothing judges a step. A per-block signal — the
-share of a block's queries that filtered on a true entity — was built and
-removed: it measures which SQL the agent ran, which is its strategy rather than
-its output, and decomposing its 0.35 correlation with the outcome showed the
-strongest part (0.41) was querying the service the incident text already names,
-against 0.24 for root causes and 0.14 for the middle of the chain. Within a
-chaos family it ranged 0.07 to 0.67 over six to fifteen episodes. `shaping`
-defaults to 0.0 and the code path remains for the next candidate.
-
-**No critic.** `discount` and `gae_lambda` are both 1 and `critic` is null, so
-GAE is an identity and the algorithm is RLOO. The PPO clip that remains is
-off-policy correction for asynchronous rollout, not step-size control.
-
-**No turn-level credit.** Section 7. The citation channel that could have
-provided it does not: only 12.6% of the SQL statements a submission cites match
-a query the episode actually ran — the model composes a clean statement after
-the fact rather than quoting one.
-
-## 10. What is not yet known
+## 9. What is not yet known
 
 **The real within-group variance.** Everything above turns on the eight rollouts
 differing. The one case observed more than once (`case0`, three rollouts) had

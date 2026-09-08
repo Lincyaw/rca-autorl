@@ -40,12 +40,8 @@ class DshWorkflow(AReaLAgentWorkflow):
         self.max_tokens = int(config.get("max_tokens") or 8192)
         self.context_window = int(config.get("context_window") or 0)
         self.timeout = float(config.get("timeout") or 1800.0)
-        # Weight of a per-block process term. Zero, and the default: the only
-        # process signal measured so far tracked which SQL the agent ran, which
-        # is its strategy rather than what it produced — and the part of it that
-        # correlated best with being right was querying the service the incident
-        # text already names. The code path stays for the next candidate.
-        self.shaping = float(str(config.get("shaping") or 0.0))
+        # Weight of the per-block process term against the outcome.
+        self.shaping = float(str(config.get("shaping") or 0.2))
         # The same number `apply_reward_discount` uses. The rewards this
         # workflow returns are differences between turn values, and the
         # differencing only inverts the accumulation if both sides agree —

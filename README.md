@@ -181,14 +181,6 @@ sample of a prompt has run and before their interactions are merged
 to the agent it wraps). `DshWorkflow` implements it, and leaves an incomplete
 group alone: weights read off a partial group would call its missing parts hard.
 
-There is no process supervision here. Nothing judges a step, every turn of a
-trajectory carries the same value, and the per-block term that briefly did is
-weighted zero — the only process signal measured tracked which SQL the agent
-ran, which is its strategy rather than its output, and the part of it that
-correlated best with being right (0.41 of the 0.35 total) was querying the
-service the incident text names. `paper/ideas` and `../Notes` call that the
-output-versus-strategy distinction; this is what it rules out.
-
 Addressing a turn needs the id AReaL keys its cache by, and the session log does
 not carry it. The `rca-completions` row reads it off `finish`'s `replayState`
 — documented as "response-level adapter-private metadata (ids, native stop
@@ -202,36 +194,6 @@ Generation limits stay AReaL's: `rollout.model` is the served name the route dec
 `gconfig.max_new_tokens` becomes the request's `max_tokens`, and `sglang.context_length`
 becomes the window compaction triggers below. `train.py` passes all three into the
 workflow, so none is declared twice.
-
-Reward has two terms and lands per turn, not per episode.
-
-The outcome is `fpg.compare_model_to_ground_truth`: the submitted graph against
-the case's `causal_graph_verified.json`, scored on root subjects, all subjects,
-and contracted edges. The process term is what makes that attributable. An
-episode runs 50-200 tool calls and submits once, so a single terminal number
-credits every turn by where it sat. The `take_note` policy already cuts the
-trajectory into blocks — a run of queries and the finding the model commits to —
-and a block whose queries interrogate entities on the true propagation path is a
-block that moved. Across the first fifty episodes that per-block hit rate
-correlates 0.35 with the final score, against 0.06 for hops-to-root and -0.06
-for how early a root is first queried; it is weighted at 0.2 (`econfig.shaping`)
-because it tracks being right without defining it.
-
-Placement does the rest. AReaL accumulates rewards backward
-(`reward[i] += reward[i+1] * turn_discount`), so a block's reward left on the
-turn that closed it reaches every turn inside and before, which is uniform
-within a block and not across them. `DshWorkflow.run` therefore returns
-`dict[completion_id, reward]`.
-
-Addressing a turn needs the id AReaL keys its cache by, and the session log does
-not carry it. The `rca-completions` row reads it off `finish`'s `replayState`
-— documented as "response-level adapter-private metadata (ids, native stop
-reason)", where `llm-pi-ai` puts the provider's `responseId` — and writes one
-line per request to `$DSH_HOME/rca-completions/<session>.jsonl`. `purpose`
-separates the agent's turns from the compaction summarizer, which the proxy
-caches too and which no policy chose. If the sidecar's agent-request count does
-not match the log's, the mapping is refused whole and the outcome falls back to
-the last turn: crediting the wrong turn is worse than crediting none.
 
 ## SFT
 
