@@ -1,4 +1,4 @@
-"""What an episode earned, and which of its turns earned it.
+"""What an episode earned, and how much of it each turn is answerable for.
 
 Two signals, deliberately different in kind.
 
@@ -9,24 +9,34 @@ episode was right.
 
 The **process** is what makes that outcome attributable to steps rather than to
 positions. An episode runs 50-200 tool calls and submits once; with a single
-terminal number every turn is credited by where it sat, not by what it did. The
-`take_note` policy already cuts the trajectory into blocks — a run of queries
-followed by the finding the model commits to — and a block whose queries
-interrogate entities that are actually on the true propagation path is a block
-that moved. Measured across the first fifty collected episodes, that per-block
-hit rate correlates 0.41 with the final score, where the per-query variants
-(hops-to-root, how early a root is first queried) correlate 0.06 and -0.06.
+terminal number every turn is credited by where it sat. The `take_note` policy
+already cuts the trajectory into blocks — a run of queries followed by the
+finding the model commits to — and a block whose queries interrogate entities
+that are actually on the true propagation path is a block that moved. Measured
+across the first fifty collected episodes, that per-block hit rate correlates
+0.35 with the final score, where the per-query variants (hops-to-root, how early
+a root is first queried) correlate 0.06 and -0.06.
 
-Placement is what turns those numbers into credit. AReaL accumulates rewards
-backward — `reward[i] += reward[i+1] * turn_discount` — so a reward left on the
-turn that closed a block reaches every turn inside it and every turn before it,
-and nothing after. Within a block that is uniform, which is the intent: the
-queries of a block are one investigative move. Across blocks it is not, which is
-also the intent. The positional component that survives is removed by the group
-baseline, since every sample of a prompt shares it.
+A turn's value is `outcome + shaping * (its block's rate - the per-turn mean
+rate)`, and the second term is centred so an episode's mean turn value is
+exactly its outcome. That is a redistribution, not a bonus, and the difference
+matters: the model cannot see the true entity set, so the only way to raise a
+hit rate it does not understand is to name more services per filter. A bonus
+would pay for `WHERE service_name IN ('a', ..., 'z')`; centring cannot.
 
-Compaction completions get nothing. The summarizer is a request the proxy caches
-like any other, but no policy chose it.
+Both axes are then read back by the normalization AReaL already applies.
+`GroupedRolloutWorkflow` merges a prompt's samples into one trajectory, so
+`reward_norm(mean_level="group", mean_leave1out=true)` centres each turn against
+every turn of every sibling sample; because the shaping is zero-mean inside each
+episode, that baseline is the cross-sample mean outcome and the advantage comes
+out as `outcome - mean sibling outcome + this turn's deviation`. An earlier
+version of this module computed that split itself, on the belief that AReaL's
+group was one rollout's turns. It is not, and the custom advantage was both
+unnecessary and wrong.
+
+What this returns is what AReaL must *add* at each turn, not the value itself:
+it accumulates backward (`reward[i] += reward[i+1] * discount`), so the
+own-reward is the difference between neighbouring values.
 """
 
 from __future__ import annotations

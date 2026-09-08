@@ -154,11 +154,6 @@ the endpoint as an `llm-pi-ai` route instead, whose `openai-completions` protoco
 the OpenAI dialect proper; the same replay then yields `sql, sql, submit_result`. SFT
 collection composes through the same function, so the two paths cannot drift.
 
-Generation limits stay AReaL's: `rollout.model` is the served name the route declares,
-`gconfig.max_new_tokens` becomes the request's `max_tokens`, and `sglang.context_length`
-becomes the window compaction triggers below. `train.py` passes all three into the
-workflow, so none is declared twice.
-
 Reward is a redistribution, and AReaL's group normalization reads it on two axes.
 
 The outcome is `fpg.compare_model_to_ground_truth`: the submitted graph against
