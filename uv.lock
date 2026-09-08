@@ -1320,6 +1320,15 @@ wheels = [
 ]
 
 [[package]]
+name = "fpg"
+version = "0.1.0"
+source = { git = "https://github.com/Lincyaw/fpg-convention.git?rev=1be954208b6bb4ffbdd6bd9db0c0357d5d415990#1be954208b6bb4ffbdd6bd9db0c0357d5d415990" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[[package]]
 name = "frozenlist"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4045,6 +4054,7 @@ source = { editable = "." }
 dependencies = [
     { name = "areal", extra = ["sglang"] },
     { name = "deepseek-harness-sdk" },
+    { name = "fpg" },
 ]
 
 [package.dev-dependencies]
@@ -4058,6 +4068,7 @@ dev = [
 requires-dist = [
     { name = "areal", extras = ["sglang"], editable = "third_party/AReaL" },
     { name = "deepseek-harness-sdk", specifier = ">=0.1.2rc1" },
+    { name = "fpg", git = "https://github.com/Lincyaw/fpg-convention.git?rev=1be954208b6bb4ffbdd6bd9db0c0357d5d415990" },
 ]
 
 [package.metadata.requires-dev]

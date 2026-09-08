@@ -1,9 +1,9 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { clearUnnoted, recordUnnoted, unnotedCount } from './note-ledger.js'
-import { NOTE_TOOL } from './notebook.js'
-import { SQL_TOOL } from './sql-tool.js'
+import { denialReason, NOTE_TOOL, noteReminder, SQL_TOOL } from './prompts.js'
 
 const PLUGIN_SOURCE = { kind: 'plugin', plugin: 'rca-note-policy' }
+
 
 /**
  * Make the notebook happen.
@@ -47,12 +47,7 @@ export function registerNotePolicy(ctx, state, noteEvery, noteLimit) {
     if (used >= noteLimit) {
       return {
         kind: 'deny',
-        reason:
-          `${used} queries have run since your last note, so \`${SQL_TOOL}\` is closed until one `
-          + `lands. Rephrasing this query will be denied too. Call \`${NOTE_TOOL}\` now with what `
-          + 'those queries established — the statement, what its result showed, and what it '
-          + 'implies — and querying reopens immediately. Older results are compacted to a file '
-          + 'reference you cannot read back, so an unwritten finding is lost.',
+        reason: denialReason(used),
       }
     }
 
@@ -73,12 +68,7 @@ export function registerNotePolicy(ctx, state, noteEvery, noteLimit) {
     const notice = createUserMessage({
       content: [{
         type: 'text',
-        text:
-          `Note reminder: ${used} queries have run since your last note.\n`
-          + `Call \`${NOTE_TOOL}\` with what they established before the next query. Older `
-          + 'results are compacted away and only the notebook survives, so an unwritten '
-          + `finding is lost. After ${noteLimit} unnoted queries \`${SQL_TOOL}\` is refused `
-          + 'until a note lands.',
+        text: noteReminder(used, noteLimit),
       }],
       source: { ...PLUGIN_SOURCE, form: 'notice', summary: `${used} queries unnoted` },
     })

@@ -31,10 +31,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import ValidationError
+
 from autorl.agent import resolve_data_dir, submitted_result
 from autorl.data.samples import load_manifest_samples
+from autorl.fpg import parse_submission
 from autorl.harness import ModelRoute, model_route, require_bundle, run_episode
 from autorl.interfaces import RCASample
+
+
+def _first(sample: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    """The first key present with a value, treating 0 and "" as present."""
+    for key in keys:
+        value = sample.get(key)
+        if value is not None and value != "":
+            return value
+    return None
 
 
 @dataclass
@@ -45,6 +57,7 @@ class Episode:
     session_id: str
     finish_reason: str
     submitted: bool
+    in_contract: bool = False
     error: str = ""
 
 
@@ -57,7 +70,8 @@ def collect_case(
     timeout: float,
     dataset_root: str,
 ) -> Episode:
-    case_id = str(sample.get("id") or sample.get("source") or sample.get("datapack_name"))
+    # `or` would skip a row whose id is 0, and the corpus indexes from zero.
+    case_id = str(_first(sample, ("id", "source", "datapack_name")))
     incident = str(sample.get("question") or sample.get("incident") or "").strip()
     if not incident:
         raise ValueError(f"case {case_id} has no question/incident")
@@ -74,10 +88,24 @@ def collect_case(
             timeout=timeout,
         )
     except Exception as error:  # one failed case must not lose the rest of the batch
-        return Episode(case_id, session_id, "error", False, f"{type(error).__name__}: {error}")
-    return Episode(
-        case_id, result.session_id, str(result.finish_reason), submitted_result(result) is not None
-    )
+        return Episode(
+            case_id, session_id, "error", False, error=f"{type(error).__name__}: {error}"
+        )
+    submission = submitted_result(result)
+    episode = Episode(case_id, result.session_id, str(result.finish_reason), submission is not None)
+    if submission is None:
+        return episode
+    # The harness tool validated these arguments before it accepted the call, so
+    # this can only fail if the two sides of the contract have drifted apart —
+    # which is worth one parse per episode to learn now rather than at training
+    # time, when the row is already in the dataset.
+    try:
+        parse_submission(submission)
+    except ValidationError as error:
+        episode.error = f"submission is out of contract: {error.error_count()} violation(s)"
+        return episode
+    episode.in_contract = True
+    return episode
 
 
 def main(argv: list[str]) -> None:
@@ -93,10 +121,11 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--concurrency", type=int, default=1)
     # Mirror the limits the student is actually served under, so the teacher
     # trajectory is one the student could have produced: `gconfig.max_new_tokens`
-    # and `sglang.context_length` from configs/train/dsh_rca_smoke.yaml. The
-    # window is also what compaction triggers below, which is what keeps an
-    # exported row inside the SFT config's max_length.
-    parser.add_argument("--max-tokens", type=int, default=8192)
+    # and `sglang.context_length` from configs/train/dsh_rca_smoke.yaml — these
+    # two defaults move only when that file does. The window is also what
+    # compaction triggers below, which is what keeps an exported row inside the
+    # SFT config's max_length.
+    parser.add_argument("--max-tokens", type=int, default=12288)
     parser.add_argument("--context-window", type=int, default=32768)
     parser.add_argument("--timeout", type=float, default=3600.0)
     parser.add_argument("--dataset-root", default="")
@@ -129,7 +158,7 @@ def main(argv: list[str]) -> None:
         )
         print(
             f"{episode.case_id}\t{episode.finish_reason}\t"
-            f"submitted={episode.submitted}\t{episode.error}",
+            f"submitted={episode.submitted}\tin_contract={episode.in_contract}\t{episode.error}",
             flush=True,
         )
         return episode
@@ -138,7 +167,11 @@ def main(argv: list[str]) -> None:
         episodes = list(pool.map(run, samples))
 
     submitted = sum(1 for e in episodes if e.submitted)
-    print(f"collected {len(episodes)} episode(s), {submitted} with a submission, into {dsh_home}")
+    in_contract = sum(1 for e in episodes if e.in_contract)
+    print(
+        f"collected {len(episodes)} episode(s), {submitted} with a submission "
+        f"({in_contract} in contract), into {dsh_home}"
+    )
     if args.report:
         report = Path(args.report).expanduser()
         report.parent.mkdir(parents=True, exist_ok=True)

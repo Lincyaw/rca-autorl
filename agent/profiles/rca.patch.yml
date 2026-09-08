@@ -30,9 +30,14 @@
       hypothesis rather than asserting it.
 
       Reconstruct the causal propagation graph from the alerting symptom back to
-      its origin, and identify the root causes. Every non-hypothesis node must
-      cite the SQL statement you actually ran and what its result showed. Do not
-      invent evidence.
+      its origin, and identify the root causes. A node is one checkable
+      statement — this entity exhibited this failure mode during this window —
+      not a sentence about the incident. The entity is named `<kind>:<name>` and
+      the failure mode comes from a fixed vocabulary, both listed in the
+      `submit_result` schema; anything the two cannot carry, such as which
+      endpoint or which pool, belongs in the evidence explanation. Every
+      non-hypothesis node must cite the SQL statement you actually ran and what
+      its result showed. Do not invent evidence.
 
       Finish by calling submit_result exactly once. Nothing you write outside
       that call is recorded as your answer.

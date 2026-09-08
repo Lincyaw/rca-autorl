@@ -22,6 +22,12 @@ DshWorkflow ──▶ DeepSeekHarness SDK ──▶ dsh runtime subprocess
 - `src/autorl/agent.py`: direct AReaL workflow around the public `DeepSeekHarness` SDK.
 - `src/autorl/harness.py`: composes a launch — bundle install, scenario layer,
   model route, and the one `dsh` runtime construction both paths use.
+- `src/autorl/fpg.py`: binds the fault propagation graph schema to this
+  testbed's vocabulary, and projects it into the harness bundle.
+- `configs/fpg/microservices.toml`: that vocabulary — the entity kinds, failure
+  modes, and propagation mechanisms an answer and its ground truth may use.
+- `src/autorl/dataset.py`: prepares `datapacks/ops-lite` — the incident manifest
+  and the ground truth the verifier will read.
 - `agent/`: the RCA harness — the `dsh` bundle that replaces the shell with a
   bounded DuckDB `sql` tool over the snapshot, an investigation notebook, and
   the terminal `submit_result`, plus the RCA scenario patch and the gateway
@@ -40,6 +46,51 @@ DshWorkflow ──▶ DeepSeekHarness SDK ──▶ dsh runtime subprocess
 Generic task/runtime/gateway contracts are deliberately absent. If another agent is
 trained, add another direct workflow like AReaL does for SWE instead of introducing a
 framework inside this repository.
+
+## The answer and the corpus
+
+What an episode submits and what it is scored against are the same schema. That
+schema is `fpg` ([fpg-convention](https://github.com/Lincyaw/fpg-convention)), a
+pinned dependency owning the fault propagation graph's structure — nodes as
+time-anchored `(entity, failure mode, window, evidence)` statements, edges as
+existence and direction, root causes stated explicitly. `ModelRCAOutput` is what
+`submit_result` accepts; `Scenario` is what the annotation writes.
+
+`configs/fpg/microservices.toml` owns the half that is testbed-specific: the
+entity kinds a subject may name, the failure modes a predicate may assert, the
+channels an edge may travel. It is adopted, not authored — `datapacks/ops-lite`
+is already annotated in exactly these terms, and a vocabulary that existed on
+only one side would be a vocabulary nothing could be scored on.
+
+`datapacks/ops-lite` is our copy of a 500-case corpus over three testbeds
+(train-ticket 310, DeathStarBench hotel reservation 152, OpenTelemetry Demo 38).
+Each case carries the abnormal and normal telemetry as Parquet plus
+`causal_graph_verified.json`, an `fpg.Scenario` ground truth. Two things it does
+not ship are derived by `python -m autorl.dataset`: the incident prompt, from
+the SLO violations in `conclusion.parquet`, and a `vocab_version` restamped from
+the corpus's `microservices-0.4.0` to the 0.5.0 this repository maintains — an
+additive migration, since 0.5.0 only adds three predicates, one mechanism, and
+the `link` entity type. It writes `data.jsonl` (433 trainable cases) and
+`data.excluded.jsonl`, which records why the other 67 are out: 51 show no SLO
+violation at all (the injected fault never reached an endpoint — 32 of the 38
+otel-demo cases), 15 carry the annotation pipeline's `.invalid` marker, and 3
+have an empty verified graph.
+
+`datapacks/` is not versioned — 7.4G of telemetry does not belong in a git
+history. It is reproduced by copying the release into `datapacks/ops-lite` and
+running the preparation once, which is idempotent, so a second run on an
+already-prepared corpus changes nothing.
+
+```bash
+python -m autorl.dataset datapacks/ops-lite        # idempotent; --check to dry-run
+```
+
+Both halves of the contract are enforced at the moment the model answers.
+`src/autorl/fpg.py` binds them into pydantic models and generates
+`agent/rca-harness/src/vocabulary.js` so the harness tool rejects an
+out-of-contract submission before it becomes a training example, and
+`tests/test_submit_result_contract.py` holds the two enforcements to the same
+verdicts.
 
 ## Setup
 
@@ -78,7 +129,7 @@ The input is the processed RCA JSONL. Each row needs an incident (`question` or
 dataset root.
 
 ```bash
-export RCA_DATASET_ROOT=/path/to/rca
+export RCA_DATASET_ROOT=$PWD/datapacks/ops-lite
 ./scripts/run_smoke.sh -p train_dataset.path=$RCA_DATASET_ROOT/data.jsonl \
   -p valid_dataset.path=$RCA_DATASET_ROOT/data.jsonl
 ```
@@ -131,6 +182,9 @@ python -m autorl.data.export .runs/sft-collect/dsh-home .runs/sft/rca_sessions.j
 `--base-url` takes the same route the rollout takes — see the RL section for why
 an endpoint is declared rather than overridden. Without it the episode runs on
 `sdk-minimal`'s own `deepseek-official` route, which reads `DEEPSEEK_API_KEY`.
+Each episode's submission is re-validated against the bound schema and reported
+as `in_contract`; the harness tool already enforced it, so anything other than
+all of them means the two sides have drifted.
 
 The exporter writes the conversation the teacher actually held — the session's
 final surface, folded the way the harness folds it, plus the tool schemas it was

@@ -41,6 +41,11 @@ artifacts/metadata/*.env
 artifacts/metadata/*.json
 !artifacts/**/.gitkeep
 
+# Local corpora. `datapacks/ops-lite` is 7.4G of telemetry plus its annotation;
+# it is a working copy, reproduced by copying the release and running
+# `python -m autorl.dataset`, not something the history should carry.
+datapacks/
+
 # Local datasets and sample manifests
 data/processed/*
 !data/processed/.gitkeep

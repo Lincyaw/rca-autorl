@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "areal[sglang]>=2.0.0,<3.0.0",
     "deepseek-harness-sdk>=0.1.2rc1",
+    "fpg>=0.1.0",
 ]
 
 [build-system]
@@ -28,6 +29,11 @@ where = ["src"]
 
 [tool.uv.sources]
 areal = { path = "third_party/AReaL", editable = true }
+# The fault propagation graph contract: the shape `submit_result` accepts and
+# the ground truth will be re-annotated into. Pinned by commit — the schema is
+# a contract between this repository, the annotation, and the verifier, so it
+# moves only when all three do.
+fpg = { git = "https://github.com/Lincyaw/fpg-convention.git", rev = "1be954208b6bb4ffbdd6bd9db0c0357d5d415990" }
 torch = { index = "pytorch-cu129" }
 torchaudio = { index = "pytorch-cu129" }
 torchvision = { index = "pytorch-cu129" }
@@ -68,5 +74,8 @@ module = [
     "deepseek_harness.*",
     "deepseek_harness_runtime.*",
     "datasets.*",
+    # fpg ships no py.typed marker; it is a pydantic package, so what reaches
+    # this repository is validated at runtime either way.
+    "fpg.*",
 ]
 ignore_missing_imports = true

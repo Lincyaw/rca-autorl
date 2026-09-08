@@ -61,7 +61,11 @@ class DshWorkflow(AReaLAgentWorkflow):
         result = await asyncio.to_thread(
             self._run_episode, incident, data_dir, str(base_url), api_key
         )
-        case_id = data.get("id") or data.get("source") or data.get("datapack_name")
+        # A row whose id is 0 is a row, so this is not an `or` chain.
+        case_id = next(
+            (data[key] for key in ("id", "source", "datapack_name") if data.get(key) is not None),
+            None,
+        )
         submission = submitted_result(result)
         logger.info(
             f"Finished RCA episode: case={case_id} finish_reason={result.finish_reason} "
@@ -101,7 +105,14 @@ def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:
 
     datapack = sample.get("datapack_name") or sample.get("data_pack_name")
     if datapack and dataset_root:
-        return str(Path(dataset_root).expanduser() / str(datapack))
+        root = Path(dataset_root).expanduser()
+        # `datapacks/ops-lite` keeps its snapshots one level down, beside the
+        # manifest they are listed in, so the dataset root a caller names is the
+        # corpus and not the case directory.
+        for candidate in (root / str(datapack), root / "cases" / str(datapack)):
+            if candidate.is_dir():
+                return str(candidate)
+        return str(root / str(datapack))
     raise ValueError(
         "RCA sample needs data_dir, or datapack_name with econfig.dataset_root/RCA_DATASET_ROOT"
     )

@@ -49,10 +49,17 @@ gconfig:
   min_new_tokens: 0
   # The harness sends this as the request's `max_tokens`. Reasoning shares the
   # budget with the answer: at 4096 under high reasoning effort an episode spent
-  # the whole cap thinking and never emitted submit_result. It must also leave
-  # room under sglang.context_length once the prompt reaches the compaction
-  # threshold — see the rca-harness row's thresholdRatio.
-  max_new_tokens: 8192
+  # the whole cap thinking and never emitted submit_result, and at 8192 a
+  # submission of eight evidence-carrying nodes stopped at exactly 8193 output
+  # tokens with `edges` and `root_causes` unwritten — the registry rejected it
+  # and the retry cost a second full generation.
+  #
+  # The ceiling is arithmetic, not taste. Compaction triggers at the rca-harness
+  # row's thresholdRatio (0.6) of sglang.context_length, so the prompt can be
+  # 19661 tokens when a request goes out and the whole request must still fit
+  # 32768: anything above 13107 is a request the server rejects. 12288 leaves
+  # 819 tokens of margin.
+  max_new_tokens: 12288
   greedy: false
   temperature: 0.7
   reward_normalization: false

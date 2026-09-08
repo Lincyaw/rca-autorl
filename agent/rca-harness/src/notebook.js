@@ -1,7 +1,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { NOTE_CONTENT_DESCRIPTION, NOTE_DESCRIPTION, NOTE_TOOL } from './prompts.js'
 
-/** Model-facing name of the note-taking tool. */
-export const NOTE_TOOL = 'take_note'
+export { NOTE_TOOL }
 
 /**
  * Persistent investigation notebook.
@@ -34,18 +34,12 @@ export function registerNotebook(ctx, state) {
 
   ctx.tools.register(defineTool({
     name: NOTE_TOOL,
-    description:
-      'Record a key finding in the investigation notebook. The notebook persists '
-      + 'across context compaction. Each call returns the full notebook so your '
-      + 'accumulated findings stay visible. Call this after each sql query to '
-      + 'preserve what you learned — older sql results are automatically compacted '
-      + 'to file references between steps, so anything not noted may be lost from '
-      + 'context.',
+    description: NOTE_DESCRIPTION,
     parameters: {
       content: {
         type: 'string',
         required: true,
-        description: 'The finding to record: what you observed, the SQL that showed it, and what it implies.',
+        description: NOTE_CONTENT_DESCRIPTION,
       },
     },
     output: {

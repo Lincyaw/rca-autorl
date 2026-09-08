@@ -1,0 +1,94 @@
+# Vocabulary profile for RCA over microservice observability datasets.
+#
+# The variable half of the fault propagation graph contract: `fpg` owns the
+# structure, this file owns the value space. It binds both ends of a case at
+# once — the `submit_result` contract the RCA agent answers through, and the
+# `causal_graph_verified.json` ground truth under `datapacks/ops-lite/`, which is
+# annotated in exactly these terms. A predicate that exists on only one side is
+# a predicate nothing can be scored on, which is why there is one file and not
+# two.
+#
+# Adopted from the annotation side rather than written here: the 500 verified
+# graphs already declare `core-0.1.0+microservices-0.4.0`, and 0.5.0 adds three
+# predicates, one mechanism, and the `link` entity type without removing
+# anything, so `python -m autorl.dataset` restamps the ground truth to 0.5.0 as
+# the additive migration fpg's versioning policy describes. This repository
+# maintains the file from here on; changing a value means re-annotating. A brief
+# is not a value: rewording one changes what the model is told without changing
+# what any annotation asserted, so it does not move the version and does not
+# invalidate a ground truth file stamped with it.
+
+name = "microservices"
+version = "0.5.0"
+extends = "core"
+
+[node_predicates.process_killed]
+brief = "Service process terminated, not running"
+
+[node_predicates.network_partitioned]
+brief = "Process running but network completely severed"
+
+[node_predicates.network_degraded]
+brief = "Network path quality reduced (added delay, packet loss, corruption, bandwidth limit)"
+
+[node_predicates.cpu_saturated]
+brief = "CPU fully consumed, all request handling starved"
+
+[node_predicates.memory_exhausted]
+brief = "Memory under sustained pressure or OOM"
+
+[node_predicates.gc_pressure]
+brief = "GC storms causing repeated stop-the-world pauses"
+
+[node_predicates.dns_broken]
+brief = "DNS resolution fails or returns wrong addresses"
+
+[node_predicates.clock_skewed]
+brief = "System clock offset relative to the cluster"
+
+[node_predicates.latency_degraded]
+brief = "Specific request paths slow, local resources normal"
+
+[node_predicates.error_rate_elevated]
+brief = "Error rate higher than normal (timeouts, connection refused, exceptions)"
+
+[node_predicates.data_corrupted]
+brief = "Output data incorrect without explicit errors"
+
+[node_predicates.flow_interrupted]
+brief = "A specific request path through this service stopped; other endpoints healthy"
+
+[node_predicates.resource_pool_exhausted]
+brief = "Thread or connection pool fully occupied; all endpoints slow despite normal CPU/memory"
+
+[node_predicates.traffic_amplification]
+brief = "Abnormal request volume surge (retry storms, failover stampede)"
+
+[edge_mechanisms.sync_call_blocking]
+brief = "Degraded callee blocks its callers through synchronous calls (callee -> caller)"
+
+[edge_mechanisms.request_flow_disruption]
+brief = "Faulty caller distorts the request flow its callees receive (caller -> callee)"
+
+[edge_mechanisms.co_deployment_contention]
+brief = "Services on the same k8s node contend for node resources affected by the fault"
+
+[edge_mechanisms.shared_infra_dependency]
+brief = "Degradation transfers through a shared backing component (DB/cache/broker)"
+
+[edge_mechanisms.network_path_effect]
+brief = "A degraded or partitioned service-to-service link manifests on the service endpoint using that path"
+
+# Entity types. Each brief is handed to the model verbatim as its subject
+# vocabulary, so a brief is a prompt as well as a definition — which is exactly
+# why it stays a definition. Naming which predicates go with which kind, which
+# faults the corpus contains, or what an answer shape costs at scoring time
+# would all be answer-side knowledge arriving through the schema. What the model
+# needs from here is what each kind denotes; how to use them is the schema's job
+# to state once, in the node description, in representation terms.
+
+[entity_types.svc]
+brief = "A service in the system under investigation, whether it serves requests or backs one that does (e.g. svc:checkout, svc:mongodb-orders)"
+
+[entity_types.link]
+brief = "A directed service-to-service network path, for when the path itself is the faulty entity (e.g. link:frontend->profile)"

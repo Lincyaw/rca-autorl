@@ -19,9 +19,19 @@ paper/
   (later)            — 后续会有 sections/、figures/、experiments/ 等
 src/autorl/          — DeepSeek Harness workflow 与 AReaL 训练入口
 agent/               — 我们自己的 harness：dsh bundle（sql over snapshot / take_note / submit_result）+ scenario patch
+configs/fpg/         — FPG 答案契约的 vocabulary profile（entity 类型 / failure mode / propagation mechanism）
+datapacks/ops-lite/  — 训练/评测语料：500 case，含 fpg Scenario 形态的 ground truth（telemetry 不入 git）
 experiments/         — 实验配置、运行脚本、结果记录
 third_party/         — AReaL 子模块；DeepSeek Harness 通过锁定版本的 SDK package 引入
 ```
+
+答案契约（RCA agent 的输出与 ground truth 共用）用外部 `fpg` 包
+（github.com/Lincyaw/fpg-convention，按 commit 锁定）：agent 输出是
+`ModelRCAOutput`，标注是 `Scenario`。词表 `configs/fpg/microservices.toml`
+沿用标注侧已有的那份（0.4.0 → 0.5.0 加性迁移），不是我们另起的。
+`src/autorl/fpg.py` 绑定两者并生成 `agent/rca-harness/src/vocabulary.js`，
+harness 工具据此在提交时就拒收不合契约的答案；
+`python -m autorl.dataset` 负责语料准备（incident prompt + ground truth 重打版本）。
 
 ## 当前研究状态
 

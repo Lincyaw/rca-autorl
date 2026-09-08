@@ -12,6 +12,8 @@ agent/
     src/sql-tool.js        the sql tool — the whole evidence surface
     src/notebook.js        the take_note investigation notebook
     src/submit-result.js   the terminal submit_result tool
+    src/contract.js        the answer schema and the rules the schema DSL cannot state
+    src/vocabulary.js      GENERATED from configs/fpg/microservices.toml
     src/compaction.js      the RCA checkpoint template
     src/note-policy.js     the note reminder and its backstop
     src/note-ledger.js     unnoted-result count, shared by policy and pruner
@@ -95,12 +97,45 @@ wants.
 
 `submit_result` is the only thing the trainer reads. An RL episode needs an
 answer a verifier can score, not prose to parse, so the tool's parameter schema
-*is* the fault propagation graph contract (nodes with the SQL that grounds them,
-causal edges, root-cause ids). The registry validates the model's arguments
-against that schema before `execute` runs, and `execute` hand-checks what the
-schema DSL cannot express — non-empty node and root-cause lists, and every edge
-endpoint and root cause resolving to a declared node id. A violation becomes an
-ordinary error result, so the model retries inside the same turn.
+*is* the fault propagation graph contract — and that contract is not ours to
+invent. It is `ModelRCAOutput` from the [`fpg`](https://github.com/Lincyaw/fpg-convention)
+package, bound to the vocabulary in `configs/fpg/microservices.toml`: nodes are
+time-anchored statements (`subject` entity, `predicate` failure mode, window,
+re-executable evidence), edges carry existence and direction only, and
+`root_causes` are stated rather than read off the graph. The ground truth under
+`datapacks/ops-lite` is annotated in the same schema and the same vocabulary,
+which is the point — a submission and the answer it is scored against differ in
+content, never in shape.
+
+Structure is one thing and value space another, and the second is what actually
+decides whether an answer can be scored. Before the schema was bound, `subject`
+and `predicate` were free text, and all 98 nodes of the first ten collected
+episodes were out of contract: subjects like `ts-station-service HikariCP
+connection pool` mixed an entity with a component, predicates ran to a median
+115 characters of prose, and two episodes wrote `+01` for a timezone offset. No
+set-matching verifier can score that, and no reward built on it would mean
+anything.
+
+Enforcement is split by what each half can express. The registry validates the
+model's arguments against the parameter schema before `execute` runs, which
+covers types, required keys, and the two closed vocabularies that fit the
+enforced JSON Schema subset as `enum` — the predicate and the evidence query
+language. The subset has no `pattern`, no `minItems`, and no cross-field rules,
+so `contract.js` hand-checks the rest: the entity-reference format, ISO 8601
+timestamps with a real offset, `start` not after `end`, evidence unless the node
+is a hypothesis, unique node ids, no self-loops, and every edge endpoint and root
+cause resolving to a declared id. A violation becomes an ordinary error result,
+so the model retries inside the same turn.
+
+That leaves one schema enforced in two languages, which is a new way to drift —
+the old failure was a shape copied by hand with none of its rules, and copying
+the rules by hand instead would only move the problem. So neither side is
+written: `src/vocabulary.js` is generated from that profile by
+`python -m autorl.fpg`, and the entity-reference regex in it is read off the
+bound pydantic model rather than restated. What cannot be generated is tested.
+`tests/test_submit_result_contract.py` puts nineteen fixtures through
+`autorl.fpg.parse_submission` and the seventeen that `validate` owns through
+`contract.js` under Node, and requires the same verdict from each.
 
 The call is terminal *once it executes*: `exec.concludeTurn()` stops the loop
 after the step, and a monotonic `ctx.tools.guard()` denies every later call in
@@ -192,9 +227,14 @@ layer was silently skipped with a warning on stderr.)
 ## Install and iterate
 
 ```bash
+python -m autorl.fpg                                 # after editing the vocabulary profile
 python -m autorl.harness .runs/dsh-home              # first install
 python -m autorl.harness .runs/dsh-home --reinstall  # after editing the bundle
 ```
+
+`src/vocabulary.js` is generated, so a profile edit reaches the tool only after
+`python -m autorl.fpg` — which `scripts/check.sh` verifies, since the commit
+hook runs that and nothing else.
 
 `dsh plugin` shells out to `pnpm`; on a machine with only corepack, a one-line
 shim named `pnpm` on `PATH` (`exec corepack pnpm "$@"`) is enough. The install

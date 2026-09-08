@@ -1,10 +1,10 @@
-import { defineTool } from '@deepseek-ai/dsh-tools'
 import { DuckDBInstance } from '@duckdb/node-api'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { nextPageHint, SQL_OFFSET_DESCRIPTION, SQL_STATEMENT_DESCRIPTION, SQL_TOOL, sqlDescription } from './prompts.js'
 
-/** Model-facing name of the one evidence tool. */
-export const SQL_TOOL = 'sql'
+export { SQL_TOOL }
 
 /**
  * One DuckDB connection per episode, created on the first query.
@@ -72,7 +72,7 @@ function renderTable(value) {
     ? `${value.matched_rows} rows`
     : `rows ${first}-${last} of ${value.matched_rows}`
     + (last < value.matched_rows
-      ? `; for the next page repeat this statement with offset: ${last}, or aggregate/filter for a sharper answer`
+      ? nextPageHint(last)
       : '')
   return [status, value.columns.join('\t'), ...value.rows.map(row => row.join('\t'))].join('\n')
 }
@@ -128,19 +128,12 @@ export function registerSqlTool(ctx, state, limits) {
 
   ctx.tools.register(defineTool({
     name: SQL_TOOL,
-    description:
-      'Query the incident snapshot with DuckDB SQL. Each telemetry file is a table named after '
-      + 'the file without its extension (for example `abnormal_logs`, `normal_metrics`, '
-      + '`abnormal_traces`). Start with `SHOW TABLES`, then `DESCRIBE <table>` for its columns. '
-      + `A result is capped at ${maxRows} rows and about ${maxChars} characters; the status line `
-      + 'reports how many rows matched, and `offset` pages through them. Prefer aggregating over '
-      + 'paging. After reviewing the result, call `take_note` to record your finding — this also '
-      + 'compacts the sql result out of context, keeping only your note and a file reference.',
+    description: sqlDescription(maxRows, maxChars),
     parameters: {
-      statement: { type: 'string', required: true, description: 'One DuckDB SQL statement.' },
+      statement: { type: 'string', required: true, description: SQL_STATEMENT_DESCRIPTION },
       offset: {
         type: 'integer',
-        description: 'Skip this many matched rows before returning; for paging a capped result.',
+        description: SQL_OFFSET_DESCRIPTION,
       },
     },
     output: {

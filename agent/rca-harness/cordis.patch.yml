@@ -39,7 +39,9 @@
         # The prompt at the threshold plus the generation cap must fit the
         # serving window: the shipped 0.8 leaves only 20% for output, which is
         # 6.5k at a 32k window and less than one FPG submission under high
-        # reasoning effort. 0.6 x 32768 + 8192 max_tokens = 27.9k, inside 32k.
+        # reasoning effort. 0.6 x 32768 = 19661, plus gconfig.max_new_tokens
+        # (12288) = 31949, inside 32768 with 819 to spare. Raising either of the
+        # two past that is a request sglang rejects.
         thresholdRatio: 0.6
         # Output cap for the checkpoint request, reasoning included. The shipped
         # 8192 is not enough for a thinking model to reason and then write this
