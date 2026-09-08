@@ -154,48 +154,48 @@ the endpoint as an `llm-pi-ai` route instead, whose `openai-completions` protoco
 the OpenAI dialect proper; the same replay then yields `sql, sql, submit_result`. SFT
 collection composes through the same function, so the two paths cannot drift.
 
-Reward is a redistribution, and AReaL's group normalization reads it on two axes.
+Reward is the outcome, scored against the siblings that answered the same case.
 
-The outcome is `fpg.compare_model_to_ground_truth`: the submitted graph against
-the case's `causal_graph_verified.json`. The process term exists because an
-episode runs 50-200 tool calls and submits once, so one terminal number credits
-every turn by where it sat. The `take_note` policy already cuts the trajectory
-into blocks — a run of queries and the finding the model commits to — and a
-block whose queries interrogate entities on the true propagation path is a block
-that moved; that per-block hit rate correlates 0.35 with the final score across
-the fifty collected episodes, against 0.06 for hops-to-root and -0.06 for how
-early a root is first queried.
+`fpg.compare_model_to_ground_truth` counts every element of the true graph
+alike, and that is not what separates a good answer from a lucky one. The
+service the incident text already names is a node of the graph too, so an
+episode that filters on the endpoint it was handed scores a hit for restating
+the prompt while the injected service it had to dig for counts the same.
 
-A turn's value is `outcome + shaping * (its block's rate - the per-turn mean
-rate)`. The second term is centred, so a trajectory's mean turn value is exactly
-its outcome and no amount of querying can raise it. That is not fastidiousness:
-the model cannot see the true entity set, so the only way to raise a hit rate it
-does not understand is to name more services per filter, and a bonus would pay
-for `WHERE service_name IN ('a', ..., 'z')`.
+`n_samples` rollouts of one prompt are enough to tell those apart with no extra
+label and no extra cost. `autorl.difficulty` builds the matrix of which sample
+found which element and reads the columns: an element every sibling found was
+free and is weighted to nothing, one a single sibling found was the case and is
+weighted to almost one, one nobody found keeps full weight — the hardest part of
+a case is not its least relevant part. Recall is weighted that way; precision is
+not, because difficulty is a property of the truth and a claim outside the graph
+is simply wrong wherever it lands. On the collected episodes a sibling that
+names only the service the prompt named scores 0.00 where the flat comparison
+gave it partial credit.
 
-Both axes then fall out of the normalization AReaL already applies.
-`GroupedRolloutWorkflow` merges the `n_samples` samples of a prompt into one
-trajectory, so `concat_batch` reports that prompt's whole group as one entry and
-`reward_norm(mean_level="group", mean_leave1out=true)` centres each turn against
-every turn of every sibling sample. Since the shaping is zero-mean inside each
-episode, that baseline is the cross-sample mean outcome, and a turn's advantage
-comes out as `outcome - mean sibling outcome + its block's deviation`. Nothing
-custom is needed, which is why nothing custom is here.
+The group is visible in exactly one place, so AReaL grew a hook for it:
+`RolloutWorkflow.rescore_group` is called by `GroupedRolloutWorkflow` once every
+sample of a prompt has run and before their interactions are merged
+(`third_party/AReaL`, three additive changes; `OpenAIProxyWorkflow` forwards it
+to the agent it wraps). `DshWorkflow` implements it, and leaves an incomplete
+group alone: weights read off a partial group would call its missing parts hard.
+
+There is no process supervision here. Nothing judges a step, every turn of a
+trajectory carries the same value, and the per-block term that briefly did is
+weighted zero — the only process signal measured tracked which SQL the agent
+ran, which is its strategy rather than its output, and the part of it that
+correlated best with being right (0.41 of the 0.35 total) was querying the
+service the incident text names. `paper/ideas` and `../Notes` call that the
+output-versus-strategy distinction; this is what it rules out.
 
 Addressing a turn needs the id AReaL keys its cache by, and the session log does
 not carry it. The `rca-completions` row reads it off `finish`'s `replayState`
 — documented as "response-level adapter-private metadata (ids, native stop
 reason)", where `llm-pi-ai` puts the provider's `responseId` — and writes one
-line per request to `$DSH_HOME/rca-completions/<session>.jsonl`. Every row the
-proxy cached is addressed, the compaction summarizer included — `individual`
-exports and trains on it, so leaving it out would not exclude it, it would let
-it accumulate its neighbour's value; it is given the episode's outcome, which is
-neutral. `DshWorkflow.run` returns `dict[completion_id, reward]`, and since
-AReaL accumulates backward with `rollout.agent.turn_discount`, what it returns
-is the difference between neighbouring turn values, not the values — the
-discount is read from that same config field rather than assumed. If the sidecar's agent-request count does not match the log's, the
-mapping is refused whole and the outcome falls back to the last turn: crediting
-the wrong turn is worse than crediting none.
+line per request to `$DSH_HOME/rca-completions/<session>.jsonl`. `purpose`
+separates the agent's turns from the compaction summarizer. Every row the proxy
+cached is addressed, the summarizer included: `individual` exports and trains on
+it, so leaving it out would let it accumulate its neighbour's value.
 
 Generation limits stay AReaL's: `rollout.model` is the served name the route declares,
 `gconfig.max_new_tokens` becomes the request's `max_tokens`, and `sglang.context_length`

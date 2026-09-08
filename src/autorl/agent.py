@@ -13,6 +13,8 @@ from typing import Any, Unpack
 from areal.utils import logging
 from deepseek_harness import RunResult
 
+from autorl.difficulty import Answer, group_scores
+from autorl.fpg import parse_submission
 from autorl.harness import model_route, require_bundle, run_episode, scenario_patch
 from autorl.interfaces import (
     AReaLAgentWorkflow,
@@ -38,9 +40,12 @@ class DshWorkflow(AReaLAgentWorkflow):
         self.max_tokens = int(config.get("max_tokens") or 8192)
         self.context_window = int(config.get("context_window") or 0)
         self.timeout = float(config.get("timeout") or 1800.0)
-        # Weight of the per-block process term against the outcome. Zero trains
-        # on the graph alone.
-        self.shaping = float(str(config.get("shaping") or 0.2))
+        # Weight of a per-block process term. Zero, and the default: the only
+        # process signal measured so far tracked which SQL the agent ran, which
+        # is its strategy rather than what it produced — and the part of it that
+        # correlated best with being right was querying the service the incident
+        # text already names. The code path stays for the next candidate.
+        self.shaping = float(str(config.get("shaping") or 0.0))
         # The same number `apply_reward_discount` uses. The rewards this
         # workflow returns are differences between turn values, and the
         # differencing only inverts the accumulation if both sides agree —
@@ -52,6 +57,9 @@ class DshWorkflow(AReaLAgentWorkflow):
             .expanduser()
             .resolve()
         )
+        # One workflow instance serves every sample of a group, which is what
+        # lets `rescore_group` see them together.
+        self._answers: dict[int, Answer] = {}
         scenario_patch(self.scenario)  # fail at construction, not mid-rollout
         require_bundle(self.dsh_home)
 
@@ -77,11 +85,12 @@ class DshWorkflow(AReaLAgentWorkflow):
             None,
         )
         submission = submitted_result(result)
+        truth = truth_for_case(Path(data_dir))
         episode = episode_reward(
             events=result.events,
             completions=read_completions(self.dsh_home, session_id),
             submission=submission,
-            truth=truth_for_case(Path(data_dir)),
+            truth=truth,
             shaping=self.shaping,
             turn_discount=self.turn_discount,
         )
@@ -91,9 +100,38 @@ class DshWorkflow(AReaLAgentWorkflow):
             f"blocks={episode.blocks} progress={episode.progress:.3f} "
             f"rewarded={len(episode.shaped)} unmapped={episode.unmapped}"
         )
+        # Held for `rescore_group`: what this sample claimed, and what was
+        # true, so the group can weight each element by how few siblings found
+        # it. Keyed by sample index, which AReaL sets before the episode runs.
+        self._answers[_sample_index()] = _answer_of(submission, truth)
         # A dict addresses turns by the completion the proxy cached; a float
         # would land the whole episode on its last one.
         return episode.shaped
+
+    async def rescore_group(self, results: list[Any]) -> list[Any] | None:
+        """Rescore a prompt's samples against each other, then forget them.
+
+        `fpg`'s flat comparison counts every element of the true graph alike,
+        which pays the same for the service the incident text handed the model
+        as for the one it had to dig for. The siblings are the only difficulty
+        label available and they cost nothing extra — an element they all found
+        was free, one that a single sample found was the case.
+        """
+        answers = self._answers
+        self._answers = {}
+        if len(answers) != len(results) or any(r is None for r in results):
+            # A sample was rejected, or ran without recording. Weights read off
+            # an incomplete group would call its missing parts hard.
+            return None
+        ordered = [answers[index] for index in sorted(answers)]
+        for result, score in zip(results, group_scores(ordered), strict=True):
+            ids = list(result)
+            for completion_id in ids[:-1]:
+                result[completion_id].reward = 0.0
+            # Values accumulate backward, and with no shaping every turn's
+            # value is the episode's score, so all of it sits on the last own.
+            result[ids[-1]].reward = score
+        return results
 
     def _run_episode(
         self, incident: str, data_dir: str, base_url: str, api_key: str, session_id: str
@@ -198,3 +236,40 @@ def _required_text(sample: RCASample, keys: tuple[str, ...]) -> str:
 
 
 __all__ = ["DshWorkflow", "accepted_call_ids", "resolve_data_dir", "submitted_result"]
+
+
+def _sample_index() -> int:
+    """Which sample of its group this episode is; 0 when nothing says."""
+    try:
+        from areal.infra import workflow_context
+
+        return int(getattr(workflow_context.get(), "sample_idx", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _answer_of(submission: dict[str, JsonValue] | None, truth: Any) -> Answer:
+    """One sample's claimed and correct elements, as the sets difficulty reads."""
+    incoming = {edge.dst for edge in truth.graph.edges}
+    true_subjects = frozenset(node.subject for node in truth.graph.nodes)
+    true_roots = frozenset(n.subject for n in truth.graph.nodes if n.id not in incoming)
+    empty = frozenset[str]()
+    if submission is None:
+        return Answer(
+            found={"roots": empty, "subjects": empty, "edges": empty},
+            truth={"roots": true_roots, "subjects": true_subjects, "edges": empty},
+            claimed={"roots": empty, "subjects": empty, "edges": empty},
+        )
+    answer = parse_submission(submission)
+    subject_of = {node.id: node.subject for node in answer.nodes}
+    claimed_subjects = frozenset(subject_of.values())
+    claimed_roots = frozenset(subject_of[i] for i in answer.root_causes if i in subject_of)
+    return Answer(
+        found={
+            "roots": claimed_roots & true_roots,
+            "subjects": claimed_subjects & true_subjects,
+            "edges": empty,
+        },
+        truth={"roots": true_roots, "subjects": true_subjects, "edges": empty},
+        claimed={"roots": claimed_roots, "subjects": claimed_subjects, "edges": empty},
+    )
