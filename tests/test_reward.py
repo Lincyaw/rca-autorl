@@ -114,10 +114,36 @@ class EpisodeRewardTest(unittest.TestCase):
         kwargs.update(overrides)
         return episode_reward(**kwargs)
 
-    def test_block_reward_lands_on_the_turn_that_closed_the_block(self) -> None:
+    @staticmethod
+    def accumulate(shaped: dict[str, float], discount: float = 1.0) -> list[float]:
+        """What AReaL makes of the own-rewards: `value[i] = own[i] + value[i+1] * discount`."""
+        values: list[float] = []
+        running = 0.0
+        for own in reversed(list(shaped.values())):
+            running = own + running * discount
+            values.append(running)
+        return list(reversed(values))
+
+    def test_each_turn_accumulates_to_its_outcome_plus_its_block_credit(self) -> None:
+        """The own-rewards are differences; the contract is what they sum back to."""
         episode = self.reward()
-        self.assertAlmostEqual(episode.shaped["chatcmpl-3"], 0.2 * (2 / 3))  # step 4
-        self.assertAlmostEqual(episode.shaped["chatcmpl-6"], 0.2 * 1.0)  # step 7
+        values = self.accumulate(episode.shaped)
+        # Four turns in the first block (three queries and the note), three in
+        # the second; centring is per turn, so that is the weighting.
+        level = (4 * 0.2 * (2 / 3) + 3 * 0.2 * 1.0) / 7
+        first_block = 0.2 * (2 / 3) - level
+        second_block = 0.2 * 1.0 - level
+        self.assertEqual(len(values), 7)
+        for value in values[:4]:
+            self.assertAlmostEqual(value, first_block)
+        for value in values[4:]:
+            self.assertAlmostEqual(value, second_block)
+
+    def test_the_shaping_is_a_redistribution(self) -> None:
+        """A trajectory's mean turn value is its outcome, whatever the blocks did."""
+        episode = self.reward()
+        values = self.accumulate(episode.shaped)
+        self.assertAlmostEqual(sum(values) / len(values), episode.outcome, places=6)
 
     def test_no_submission_scores_the_outcome_zero(self) -> None:
         episode = self.reward()

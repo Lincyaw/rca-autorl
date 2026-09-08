@@ -188,21 +188,34 @@ def episode_reward(
     submission: Mapping[str, Any] | None,
     truth: Any,
     shaping: float = 0.2,
+    turn_discount: float = 1.0,
 ) -> Episode:
-    """Per-completion rewards for one episode.
+    """Per-completion rewards for one episode, in the form the advantage reads.
 
-    `shaping` is the weight of the process term relative to the outcome. It is
-    small on purpose: the block signal correlates with being right, it does not
-    define it, and a policy that learns to interrogate the right services while
-    still naming the wrong root cause has not solved the task.
+    Each turn's value is
+
+        r(turn) = outcome + shaping * (block rate - the episode's mean block rate)
+
+    which is a redistribution, not a bonus. The shaping term is zero-mean over
+    the episode's turns, so the mean of a trajectory's turn values is its
+    outcome and no amount of querying can raise it. That matters: the model
+    cannot see the true entity set, so the only way to raise a hit rate it does
+    not understand is to name more services per query — `WHERE service_name IN
+    ('a', ..., 'z')` scores as well as a considered filter. Addition would pay
+    for that; centering cannot.
+
+    The two halves stay readable downstream because they live on different
+    axes: `autorl.advantage` takes a trajectory's mean as its outcome and each
+    turn's deviation from that mean as its credit.
+
+    What is returned is what AReaL must *add* at each turn, not the value
+    itself. It accumulates backward (`reward[i] += reward[i+1] * discount`), so
+    the own-reward is the difference between neighbouring values.
     """
     outcome = outcome_score(submission, truth)
     episode = Episode(outcome=outcome)
     by_step = step_completions(events, completions)
     if not by_step:
-        # Without the mapping there is no turn to attribute anything to. The
-        # outcome still has to land somewhere, and the last turn is where the
-        # submission happened.
         last = next(
             (str(c["responseId"]) for c in reversed(list(completions)) if c.get("responseId")), ""
         )
@@ -216,15 +229,25 @@ def episode_reward(
     rates = [block.hit_rate(entities) for block in found]
     episode.progress = sum(rates) / len(rates) if rates else 0.0
 
-    rewards: dict[str, float] = {}
+    # Every turn's value, in the order the episode took them. Centring on the
+    # mean *per turn* rather than the mean per block is what makes the shaping
+    # sum to zero: blocks hold different numbers of queries, so the average of
+    # the rates is not the average a turn sees.
+    steps = sorted(by_step)
+    credit = dict.fromkeys(steps, 0.0)
     for block, rate in zip(found, rates, strict=True):
-        completion = by_step.get(block.closing_step)
-        if completion is not None:
-            rewards[completion] = rewards.get(completion, 0.0) + shaping * rate
-    terminal = by_step.get(max(by_step), "")
-    if terminal:
-        rewards[terminal] = rewards.get(terminal, 0.0) + outcome
-    episode.shaped = rewards
+        for step in (*block.steps, block.closing_step):
+            if step in credit:
+                credit[step] = shaping * rate
+    level = sum(credit.values()) / len(credit) if credit else 0.0
+    values = [outcome + credit[step] - level for step in steps]
+
+    # Backward accumulation turns own-rewards into values, so invert it.
+    own = [
+        value - turn_discount * (values[i + 1] if i + 1 < len(values) else 0.0)
+        for i, value in enumerate(values)
+    ]
+    episode.shaped = {by_step[step]: own[i] for i, step in enumerate(steps)}
     return episode
 
 

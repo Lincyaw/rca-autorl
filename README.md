@@ -159,6 +159,58 @@ Generation limits stay AReaL's: `rollout.model` is the served name the route dec
 becomes the window compaction triggers below. `train.py` passes all three into the
 workflow, so none is declared twice.
 
+Reward is a redistribution, and the advantage is ours.
+
+The outcome is `fpg.compare_model_to_ground_truth`: the submitted graph against
+the case's `causal_graph_verified.json`. The process term exists because an
+episode runs 50-200 tool calls and submits once, so one terminal number credits
+every turn by where it sat. The `take_note` policy already cuts the trajectory
+into blocks — a run of queries and the finding the model commits to — and a
+block whose queries interrogate entities on the true propagation path is a block
+that moved; that per-block hit rate correlates 0.35 with the final score across
+the fifty collected episodes, against 0.06 for hops-to-root and -0.06 for how
+early a root is first queried.
+
+A turn's value is `outcome + shaping * (its block's rate - the per-turn mean
+rate)`. The second term is centred, so a trajectory's mean turn value is exactly
+its outcome and no amount of querying can raise it. That is not fastidiousness:
+the model cannot see the true entity set, so the only way to raise a hit rate it
+does not understand is to name more services per filter, and a bonus would pay
+for `WHERE service_name IN ('a', ..., 'z')`.
+
+`autorl.advantage` then reads the two axes back off that one number — a
+trajectory's mean is its outcome, a turn's deviation is its share — and combines
+them as leave-one-out across the samples of a prompt, plus the deviation as-is.
+AReaL's own normalization cannot: with `export_style: individual` a rollout's
+turns become one trajectory, `concat_batch` reports that trajectory's row count
+as its group size, and `reward_norm(mean_level="group")` therefore centres each
+turn against the *other turns of the same rollout*. A single terminal reward
+then propagates to an identical value on every turn, the group mean equals it,
+and the advantage is zero everywhere; anything non-uniform is centred against
+position instead of against the sibling samples. The comparison RLOO exists to
+make never happens.
+
+Addressing a turn needs the id AReaL keys its cache by, and the session log does
+not carry it. The `rca-completions` row reads it off `finish`'s `replayState`
+— documented as "response-level adapter-private metadata (ids, native stop
+reason)", where `llm-pi-ai` puts the provider's `responseId` — and writes one
+line per request to `$DSH_HOME/rca-completions/<session>.jsonl`. `purpose`
+separates the agent's turns from the compaction summarizer, which the proxy
+caches too and which no policy chose. `DshWorkflow.run` returns
+`dict[completion_id, reward]`, and since AReaL accumulates backward, what it
+returns is the difference between neighbouring turn values, not the values. If
+the sidecar's agent-request count does not match the log's, the mapping is
+refused whole and the outcome falls back to the last turn: crediting the wrong
+turn is worse than crediting none.
+
+Not yet wired: `autorl.advantage` computes the maths and is tested, but
+`PPOActor.compute_advantages` still has to be subclassed to use it.
+
+Generation limits stay AReaL's: `rollout.model` is the served name the route declares,
+`gconfig.max_new_tokens` becomes the request's `max_tokens`, and `sglang.context_length`
+becomes the window compaction triggers below. `train.py` passes all three into the
+workflow, so none is declared twice.
+
 Reward has two terms and lands per turn, not per episode.
 
 The outcome is `fpg.compare_model_to_ground_truth`: the submitted graph against
