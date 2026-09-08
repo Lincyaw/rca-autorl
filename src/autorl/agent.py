@@ -21,6 +21,7 @@ from autorl.interfaces import (
     JsonValue,
     RCASample,
 )
+from autorl.reward import episode_reward, read_completions, truth_for_case
 
 logger = logging.getLogger("Dsh-RCA")
 
@@ -37,6 +38,9 @@ class DshWorkflow(AReaLAgentWorkflow):
         self.max_tokens = int(config.get("max_tokens") or 8192)
         self.context_window = int(config.get("context_window") or 0)
         self.timeout = float(config.get("timeout") or 1800.0)
+        # Weight of the per-block process term against the outcome. Zero trains
+        # on the graph alone.
+        self.shaping = float(str(config.get("shaping") or 0.2))
         self.dataset_root = str(config.get("dataset_root") or os.getenv("RCA_DATASET_ROOT") or "")
         self.dsh_home = (
             Path(str(config.get("dsh_home") or os.getenv("DSH_HOME") or ".runs/dsh-home"))
@@ -50,7 +54,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         self,
         data: RCASample,
         **extra_kwargs: Unpack[AReaLRunOptions],
-    ) -> float:
+    ) -> dict[str, float]:
         base_url = extra_kwargs.get("base_url")
         if not base_url:
             raise ValueError("AReaL did not provide a rollout proxy base_url")
@@ -58,8 +62,9 @@ class DshWorkflow(AReaLAgentWorkflow):
 
         incident = _required_text(data, ("incident", "question", "prompt"))
         data_dir = resolve_data_dir(data, self.dataset_root)
+        session_id = f"rca-{uuid.uuid4().hex}"
         result = await asyncio.to_thread(
-            self._run_episode, incident, data_dir, str(base_url), api_key
+            self._run_episode, incident, data_dir, str(base_url), api_key, session_id
         )
         # A row whose id is 0 is a row, so this is not an `or` chain.
         case_id = next(
@@ -67,13 +72,26 @@ class DshWorkflow(AReaLAgentWorkflow):
             None,
         )
         submission = submitted_result(result)
+        episode = episode_reward(
+            events=result.events,
+            completions=read_completions(self.dsh_home, session_id),
+            submission=submission,
+            truth=truth_for_case(Path(data_dir)),
+            shaping=self.shaping,
+        )
         logger.info(
             f"Finished RCA episode: case={case_id} finish_reason={result.finish_reason} "
-            f"submitted={submission is not None}"
+            f"submitted={submission is not None} outcome={episode.outcome:.3f} "
+            f"blocks={episode.blocks} progress={episode.progress:.3f} "
+            f"rewarded={len(episode.shaped)} unmapped={episode.unmapped}"
         )
-        return 0.0
+        # A dict addresses turns by the completion the proxy cached; a float
+        # would land the whole episode on its last one.
+        return episode.shaped
 
-    def _run_episode(self, incident: str, data_dir: str, base_url: str, api_key: str) -> RunResult:
+    def _run_episode(
+        self, incident: str, data_dir: str, base_url: str, api_key: str, session_id: str
+    ) -> RunResult:
         # AReaL's proxy is reached as a declared route, the same way the SFT
         # collector reaches a teacher endpoint; `model_route` says why a
         # `base_url` override is not enough. The route also carries
@@ -91,7 +109,7 @@ class DshWorkflow(AReaLAgentWorkflow):
             route=route,
             cwd=data_dir,
             prompt=incident,
-            session_id=f"rca-{uuid.uuid4().hex}",
+            session_id=session_id,
             max_tokens=self.max_tokens,
             timeout=self.timeout,
         )

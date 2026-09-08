@@ -159,12 +159,35 @@ Generation limits stay AReaL's: `rollout.model` is the served name the route dec
 becomes the window compaction triggers below. `train.py` passes all three into the
 workflow, so none is declared twice.
 
-Reward is temporarily fixed at `0.0`. The verifier and reward design will be added later;
-until then the training entry exercises rollout plumbing but produces no policy-gradient
-signal. The episode's answer is already machine-readable:
-`autorl.agent.submitted_result` returns the fault propagation graph the model passed to
-`submit_result`, read back from the session log, and that is what the verifier will
-score.
+Reward has two terms and lands per turn, not per episode.
+
+The outcome is `fpg.compare_model_to_ground_truth`: the submitted graph against
+the case's `causal_graph_verified.json`, scored on root subjects, all subjects,
+and contracted edges. The process term is what makes that attributable. An
+episode runs 50-200 tool calls and submits once, so a single terminal number
+credits every turn by where it sat. The `take_note` policy already cuts the
+trajectory into blocks — a run of queries and the finding the model commits to —
+and a block whose queries interrogate entities on the true propagation path is a
+block that moved. Across the first fifty episodes that per-block hit rate
+correlates 0.35 with the final score, against 0.06 for hops-to-root and -0.06
+for how early a root is first queried; it is weighted at 0.2 (`econfig.shaping`)
+because it tracks being right without defining it.
+
+Placement does the rest. AReaL accumulates rewards backward
+(`reward[i] += reward[i+1] * turn_discount`), so a block's reward left on the
+turn that closed it reaches every turn inside and before, which is uniform
+within a block and not across them. `DshWorkflow.run` therefore returns
+`dict[completion_id, reward]`.
+
+Addressing a turn needs the id AReaL keys its cache by, and the session log does
+not carry it. The `rca-completions` row reads it off `finish`'s `replayState`
+— documented as "response-level adapter-private metadata (ids, native stop
+reason)", where `llm-pi-ai` puts the provider's `responseId` — and writes one
+line per request to `$DSH_HOME/rca-completions/<session>.jsonl`. `purpose`
+separates the agent's turns from the compaction summarizer, which the proxy
+caches too and which no policy chose. If the sidecar's agent-request count does
+not match the log's, the mapping is refused whole and the outcome falls back to
+the last turn: crediting the wrong turn is worse than crediting none.
 
 ## SFT
 
