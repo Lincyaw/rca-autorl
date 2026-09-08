@@ -40,8 +40,6 @@ class DshWorkflow(AReaLAgentWorkflow):
         self.max_tokens = int(config.get("max_tokens") or 8192)
         self.context_window = int(config.get("context_window") or 0)
         self.timeout = float(config.get("timeout") or 1800.0)
-        # Weight of the per-block process term against the outcome.
-        self.shaping = float(str(config.get("shaping") or 0.2))
         # The same number `apply_reward_discount` uses. The rewards this
         # workflow returns are differences between turn values, and the
         # differencing only inverts the accumulation if both sides agree —
@@ -87,13 +85,11 @@ class DshWorkflow(AReaLAgentWorkflow):
             completions=read_completions(self.dsh_home, session_id),
             submission=submission,
             truth=truth,
-            shaping=self.shaping,
             turn_discount=self.turn_discount,
         )
         logger.info(
             f"Finished RCA episode: case={case_id} finish_reason={result.finish_reason} "
             f"submitted={submission is not None} outcome={episode.outcome:.3f} "
-            f"blocks={episode.blocks} progress={episode.progress:.3f} "
             f"rewarded={len(episode.shaped)} unmapped={episode.unmapped}"
         )
         # Held for `rescore_group`: what this sample claimed, and what was

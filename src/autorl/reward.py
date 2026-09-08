@@ -1,48 +1,30 @@
-"""What an episode earned, and how much of it each turn is answerable for.
+"""What an episode earned, and what each of its turns is therefore worth.
 
-Two signals, deliberately different in kind.
+Every turn of an episode carries the same value: the episode's outcome, scored
+by `autorl.difficulty` against the siblings that answered the same case. There
+is no turn-level credit, and that is a decision rather than an omission.
 
-The **outcome** is `fpg.compare_model_to_ground_truth`: the submitted graph
-against the annotation, scored predicate-agnostically on root subjects, all
-subjects, and contracted edges. It is the only term that says whether the
-episode was right.
-
-The **process** is what makes that outcome attributable to steps rather than to
-positions. An episode runs 50-200 tool calls and submits once; with a single
-terminal number every turn is credited by where it sat. The `take_note` policy
-already cuts the trajectory into blocks — a run of queries followed by the
-finding the model commits to — and a block whose queries interrogate entities
-that are actually on the true propagation path is a block that moved. Measured
-across the first fifty collected episodes, that per-block hit rate correlates
-0.35 with the final score, where the per-query variants (hops-to-root, how early
-a root is first queried) correlate 0.06 and -0.06.
-
-A turn's value is `outcome + shaping * (its block's rate - the per-turn mean
-rate)`, and the second term is centred so an episode's mean turn value is
-exactly its outcome. That is a redistribution, not a bonus, and the difference
-matters: the model cannot see the true entity set, so the only way to raise a
-hit rate it does not understand is to name more services per filter. A bonus
-would pay for `WHERE service_name IN ('a', ..., 'z')`; centring cannot.
-
-Both axes are then read back by the normalization AReaL already applies.
-`GroupedRolloutWorkflow` merges a prompt's samples into one trajectory, so
-`reward_norm(mean_level="group", mean_leave1out=true)` centres each turn against
-every turn of every sibling sample; because the shaping is zero-mean inside each
-episode, that baseline is the cross-sample mean outcome and the advantage comes
-out as `outcome - mean sibling outcome + this turn's deviation`. An earlier
-version of this module computed that split itself, on the belief that AReaL's
-group was one rollout's turns. It is not, and the custom advantage was both
-unnecessary and wrong.
+The candidate was a per-block hit rate — the share of a block's queries that
+filtered on an entity in the true graph, blocks being the runs of queries the
+`take_note` policy already separates. It correlated 0.35 with the final score
+across the fifty collected episodes, which sounds usable until it is decomposed:
+0.41 for entities the incident text already names, 0.24 for root causes, 0.14
+for the middle of the chain. Its strongest component was querying the service
+the model was handed. Within a chaos family the correlation ran 0.07 to 0.67
+over six to fifteen episodes, which is noise at that sample size. Nothing here
+establishes that the signal is real, and a term that cannot be explained after a
+training run makes the run unexplainable in both directions. See
+`.doc/designs/rl-reward.md`.
 
 What this returns is what AReaL must *add* at each turn, not the value itself:
 it accumulates backward (`reward[i] += reward[i+1] * discount`), so the
-own-reward is the difference between neighbouring values.
+own-reward is the difference between neighbouring values — zero everywhere but
+the last turn when the discount is 1, and not zero when it is not.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,30 +34,7 @@ from fpg import compare_model_to_ground_truth
 
 from autorl.fpg import parse_submission, schema
 
-SQL_TOOL = "sql"
-NOTE_TOOL = "take_note"
 SUBMIT_TOOL = "submit_result"
-
-# Values a `WHERE` compares against. Entity names reach a query as literals, and
-# reading the literals is what separates a query that interrogates a service
-# from one that merely prints its name among two hundred rows.
-LITERAL = re.compile(r"'([^']{2,120})'")
-
-
-@dataclass(frozen=True)
-class Block:
-    """One investigative move: the queries since the last note, and their turns."""
-
-    steps: tuple[int, ...]
-    statements: tuple[str, ...]
-    closing_step: int
-
-    def hit_rate(self, entities: frozenset[str]) -> float:
-        """Share of this block's queries that interrogate an entity on the true path."""
-        if not self.statements:
-            return 0.0
-        hits = sum(1 for s in self.statements if any(lit in entities for lit in LITERAL.findall(s)))
-        return hits / len(self.statements)
 
 
 @dataclass
@@ -84,8 +43,6 @@ class Episode:
 
     outcome: float
     shaped: dict[str, float] = field(default_factory=dict)
-    blocks: int = 0
-    progress: float = 0.0
     unmapped: int = 0
 
 
@@ -111,42 +68,6 @@ def load_truth(dataset_root: Path, datapack: str) -> Any:
         if (candidate / TRUTH_FILE).is_file():
             return truth_for_case(candidate)
     raise FileNotFoundError(f"no {TRUTH_FILE} for {datapack} under {dataset_root}")
-
-
-def true_entities(truth: Any) -> frozenset[str]:
-    """Every entity on the true propagation path, without its kind prefix.
-
-    Without the prefix because a query filters on the name: `WHERE service_name =
-    'ts-station-service'`, never on `svc:ts-station-service`.
-    """
-    return frozenset(node.subject.split(":", 1)[1] for node in truth.graph.nodes)
-
-
-def blocks_of(events: Sequence[Mapping[str, Any]]) -> list[Block]:
-    """Segment the trajectory at `take_note`, keeping each block's queries and turns."""
-    found: list[Block] = []
-    steps: list[int] = []
-    statements: list[str] = []
-    for event in events:
-        if event.get("type") != "tool/call":
-            continue
-        data = event.get("data")
-        if not isinstance(data, Mapping):
-            continue
-        step = data.get("step")
-        if not isinstance(step, int):
-            continue
-        if data.get("name") == SQL_TOOL:
-            steps.append(step)
-            statements.append(str(_arguments(data).get("statement", "")))
-        elif data.get("name") == NOTE_TOOL and statements:
-            found.append(Block(tuple(steps), tuple(statements), step))
-            steps, statements = [], []
-    if statements:
-        # A trailing run the model never noted still ends somewhere: the step it
-        # stopped querying on is the turn that closed it.
-        found.append(Block(tuple(steps), tuple(statements), steps[-1]))
-    return found
 
 
 def step_completions(
@@ -191,42 +112,21 @@ def outcome_score(submission: Mapping[str, Any] | None, truth: Any) -> float:
     return float(compare_model_to_ground_truth(parse_submission(submission), truth).score)
 
 
-def block_of_turn(blocks: Sequence[Block], steps: Sequence[int]) -> dict[int, int]:
-    """Which investigative move each turn belongs to.
-
-    A turn is not always inside a block's queries. One response can hold a
-    `take_note` and then the next block's first queries, so the same step closes
-    one block and opens another — it is credited to the one it closed, because
-    that is the move it committed to. And the turn that calls `submit_result`
-    holds no query at all, so it belongs to the last block that ran, not to
-    nothing: crediting it with zero would make the turn that produced the answer
-    the least-credited turn of every episode.
-    """
-    owner: dict[int, int] = {}
-    for index, block in enumerate(blocks):
-        for step in (*block.steps, block.closing_step):
-            owner.setdefault(step, index)
-    if not blocks:
-        return owner
-    closes = [block.closing_step for block in blocks]
-    for step in steps:
-        if step in owner:
-            continue
-        earlier = [i for i, close in enumerate(closes) if close <= step]
-        owner[step] = earlier[-1] if earlier else 0
-    return owner
-
-
 def episode_reward(
     *,
     events: Sequence[Mapping[str, Any]],
     completions: Sequence[Mapping[str, Any]],
     submission: Mapping[str, Any] | None,
     truth: Any,
-    shaping: float = 0.2,
     turn_discount: float = 1.0,
 ) -> Episode:
-    """Per-completion rewards for one episode, as differences between turn values."""
+    """Per-completion rewards for one episode.
+
+    Every row the proxy cached gets the episode's outcome, the compaction
+    summarizer included — `export_style: individual` trains on that row too, so
+    leaving it out would not exclude it, it would let it accumulate whatever its
+    neighbour carries.
+    """
     outcome = outcome_score(submission, truth)
     episode = Episode(outcome=outcome)
     ordered = [
@@ -234,6 +134,8 @@ def episode_reward(
         for c in sorted(completions, key=lambda c: int(c.get("ordinal", 0)))
         if c.get("responseId")
     ]
+    if not ordered:
+        return episode
     by_step = step_completions(events, completions)
     if not by_step:
         # Nothing to attribute to. The outcome still has to land somewhere, and
@@ -241,48 +143,15 @@ def episode_reward(
         # simply the last completion, which may be the compaction summarizer.
         agent = [c for c in ordered if c.get("purpose") == "agent"] or ordered
         episode.unmapped = len(completions)
-        episode.shaped = {str(agent[-1]["responseId"]): outcome} if agent else {}
+        episode.shaped = {str(agent[-1]["responseId"]): outcome}
         return episode
 
-    entities = true_entities(truth)
-    found = blocks_of(events)
-    episode.blocks = len(found)
-    rates = [block.hit_rate(entities) for block in found]
-    episode.progress = sum(rates) / len(rates) if rates else 0.0
-
-    steps = sorted(by_step)
-    owner = block_of_turn(found, steps)
-    credit = (
-        {step: shaping * rates[owner[step]] for step in steps}
-        if rates
-        else dict.fromkeys(steps, 0.0)
-    )
-
-    # Every row the proxy cached, in the order it cached them. The compaction
-    # summarizer is one of those rows and `export_style: individual` trains on
-    # it, so it cannot be left to inherit its neighbour's value by omission:
-    # it is given the episode's outcome, which is neutral with respect to the
-    # mean the advantage decodes.
-    turn_of_id = {completion: step for step, completion in by_step.items()}
-    rows = [str(c["responseId"]) for c in ordered]
-    seen = {row for row in rows if row in turn_of_id}
-    if len(seen) != len(by_step):
-        # A mapped turn is missing from the sidecar order; the differencing
-        # below would telescope across a gap it cannot see.
-        episode.unmapped = len(by_step) - len(seen)
-        return episode
-
-    # Centre over every row, so an episode's mean row value is exactly its
-    # outcome and the group baseline is the cross-sample mean of outcomes.
-    raw = [credit.get(turn_of_id.get(row, -1), 0.0) for row in rows]
-    level = sum(raw) / len(raw) if raw else 0.0
-    values = [outcome + value - level for value in raw]
-
+    values = [outcome] * len(ordered)
     own = [
         value - turn_discount * (values[i + 1] if i + 1 < len(values) else 0.0)
         for i, value in enumerate(values)
     ]
-    episode.shaped = dict(zip(rows, own, strict=True))
+    episode.shaped = {str(c["responseId"]): own[i] for i, c in enumerate(ordered)}
     return episode
 
 
@@ -298,14 +167,11 @@ def _arguments(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
-    "Block",
     "Episode",
-    "blocks_of",
     "episode_reward",
     "load_truth",
     "outcome_score",
     "read_completions",
     "step_completions",
-    "true_entities",
     "truth_for_case",
 ]

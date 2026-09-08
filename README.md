@@ -154,8 +154,12 @@ the endpoint as an `llm-pi-ai` route instead, whose `openai-completions` protoco
 the OpenAI dialect proper; the same replay then yields `sql, sql, submit_result`. SFT
 collection composes through the same function, so the two paths cannot drift.
 
-Reward is the outcome, scored against the siblings that answered the same case.
-`.doc/designs/rl-reward.md` works one real case through every number below.
+Reward is the outcome and nothing else, scored against the siblings that
+answered the same case. Every turn of an episode carries the same value; there
+is no turn-level credit, because the one candidate measured for it correlated
+0.35 with the outcome and 0.41 of that was querying the service the incident
+text already names. `.doc/designs/rl-reward.md` works one real case through
+every number below, and section 9 has that measurement.
 
 `fpg.compare_model_to_ground_truth` counts every element of the true graph
 alike, and that is not what separates a good answer from a lucky one. The

@@ -112,7 +112,38 @@ Under a flat score the two are worth the same, so the cheaper strategy wins on
 cost: sweep the easy entities, never attempt the expensive one. That is a
 policy the flat reward would actively train.
 
-## 9. What is not yet known
+## 9. Why there is no turn-level credit
+
+Every one of an episode's turns carries the same value, and the candidate that
+would have changed that was measured and dropped.
+
+That candidate was a per-block hit rate: the `take_note` policy already
+separates the trajectory into runs of queries, and the share of a run's queries
+that filtered on an entity in the true graph is a per-block number. Across the
+fifty collected episodes it correlated 0.35 with the final score, against 0.06
+for the hops-to-root of what a query targeted and -0.06 for how early a root was
+first queried.
+
+Decomposing the 0.35 is what settled it:
+
+| the hit rate, computed over | correlation |
+| --- | --- |
+| every true entity | 0.348 |
+| **only entities the incident text names** | **0.414** |
+| only the root causes | 0.235 |
+| only the middle of the chain | 0.141 |
+
+Its strongest component is querying the service the model was handed — which is
+also the element the difficulty weighting in section 5 deliberately prices at
+zero. Within a chaos family the correlation ran 0.07 to 0.67 over six to fifteen
+episodes, which at that sample size is not a stable effect.
+
+None of that proves the signal is worthless. It does mean nothing establishes it
+is real, and a term that cannot be explained after a training run leaves the run
+unexplainable whichever way it goes. The reward is the outcome alone until
+something with an argument behind it replaces this.
+
+## 10. What is not yet known
 
 **The real within-group variance.** Everything above turns on the eight rollouts
 differing. The one case observed more than once (`case0`, three rollouts) had
