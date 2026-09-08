@@ -151,6 +151,18 @@ def build_messages(surface: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return messages
 
 
+def _provenance(session_path: Path) -> str:
+    """Which session this row came from: its directory and file, nothing above.
+
+    These rows are a checked-in artifact. The absolute path names the machine
+    that collected them, and the directory above the session is `dsh`'s slug of
+    the episode's working directory, which names that machine's layout. The
+    session id identifies the session on its own, and `sample_id` already
+    carries which case it was.
+    """
+    return f"{session_path.parent.name}/{session_path.name}"
+
+
 def export_session(session_path: Path, sample_id: str | None = None) -> dict[str, Any] | None:
     """One SFT row for one session, or None when it carries no assistant turn."""
     events = [
@@ -178,7 +190,9 @@ def export_session(session_path: Path, sample_id: str | None = None) -> dict[str
         "root_session_id": events[0]["id"],
         "messages": messages,
         "tools": header.get("tools") or [],
-        "meta": {"source": str(session_path)},
+        # Relative to the Harness home: an absolute path would carry the
+        # machine that collected the trajectories into a checked-in artifact.
+        "meta": {"source": _provenance(session_path)},
     }
 
 

@@ -74,6 +74,14 @@
         headChars: 200
         tailChars: 120
 
+    # Records the provider's response id per LLM request. RL credit finer than
+    # the whole trajectory needs it — AReaL keys its reward cache by that id —
+    # and the session log does not carry it.
+    - id: rca-completions
+      name: '@rca-autorl/dsh-rca-harness/completions'
+      config:
+        root: !!js dshHomePath('rca-completions')
+
     - id: rca-harness
       name: '@rca-autorl/dsh-rca-harness'
       config:

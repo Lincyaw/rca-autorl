@@ -147,22 +147,23 @@ sglang:
 # RL data — directly consumes the processed RCA dataset. Each
 # row carries {id/source, question, ground_truth, fault_type,
 # datapack_name}; DshWorkflow resolves data_dir by joining
-# econfig.dataset_root with datapack_name. Default points
-# at the canonical workspace dataset; override with `-p
-# train_dataset.path=...` when pointing at a different jsonl.
+# econfig.dataset_root with datapack_name. The default is the corpus this
+# repository prepares — `python -m autorl.dataset datapacks/ops-lite` writes it,
+# and the path is relative so a checkout is self-contained. Point elsewhere with
+# `train_dataset.path=...`.
 train_dataset:
   batch_size: 1
   shuffle: false
   pin_memory: false
   type: rl
-  path: /home/ddq/AoyangSpace/dataset/rca/data.jsonl
+  path: datapacks/ops-lite/data.jsonl
 
 valid_dataset:
   batch_size: 1
   shuffle: false
   pin_memory: false
   type: rl
-  path: /home/ddq/AoyangSpace/dataset/rca/data.jsonl
+  path: datapacks/ops-lite/data.jsonl
 
 saver:
   experiment_name: ${experiment_name}

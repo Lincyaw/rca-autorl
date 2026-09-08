@@ -10,7 +10,8 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json",
     "./compaction": "./src/compaction.js",
-    "./pruner": "./src/pruner.js"
+    "./pruner": "./src/pruner.js",
+    "./completions": "./src/completions.js"
   },
   "files": [
     "src",
