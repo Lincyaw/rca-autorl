@@ -14,7 +14,10 @@ cd "$ROOT_DIR"
 export PATH="$ROOT_DIR/.venv/bin:$PATH"
 
 DSH_HOME=${DSH_HOME:-$ROOT_DIR/.runs/dsh-live-smoke/dsh-home}
-python3 -m autorl.harness "$DSH_HOME"
+# Always reinstall: `pnpm add` on an unchanged `file:` spec is a no-op however
+# much the bundle changed, so "already installed" says nothing about what is.
+# A run once spent 234 episodes on a bundle hours old while every check passed.
+python3 -m autorl.harness "$DSH_HOME" --reinstall
 
 # sglang JIT-compiles kernels with nvcc, and CUDA < 12.8 cannot target SM120.
 # Point CUDA_HOME at a toolkit new enough for the GPU when the system one is older.

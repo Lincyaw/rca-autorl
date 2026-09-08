@@ -10,6 +10,9 @@ export PATH="$ROOT_DIR/.venv/bin:$PATH"
 # The RCA harness bundle must be in the profile before any rollout starts;
 # `dsh plugin` shells out to pnpm and must not race with concurrent rollouts.
 # The default matches econfig.dsh_home in the config below.
-python3 -m autorl.harness "${DSH_HOME:-$ROOT_DIR/.runs/dsh-rca-smoke/dsh-home}"
+# Always reinstall: `pnpm add` on an unchanged `file:` spec is a no-op however
+# much the bundle changed, so "already installed" says nothing about what is.
+# A run once spent 234 episodes on a bundle hours old while every check passed.
+python3 -m autorl.harness "${DSH_HOME:-$ROOT_DIR/.runs/dsh-rca-smoke/dsh-home}" --reinstall
 
 python3 -m autorl.train --config configs/train/dsh_rca_smoke.yaml "$@"
