@@ -179,6 +179,12 @@ python -m autorl.data.export .runs/sft-collect/dsh-home .runs/sft/rca_sessions.j
 ./scripts/run_sft_smoke.sh
 ```
 
+`data/sft/rca_sessions.jsonl` is the distillation the SFT configs point at by
+default, checked in through git-lfs: 50 teacher episodes over a stratified slice
+of the corpus, which `autorl.data.sft` expands into 947 training rows. Clone with
+`git lfs pull` to get it; a fresh export goes to `.runs/` and is selected with
+`-p train_dataset.path=...`.
+
 `--base-url` takes the same route the rollout takes — see the RL section for why
 an endpoint is declared rather than overridden. Without it the episode runs on
 `sdk-minimal`'s own `deepseek-official` route, which reads `DEEPSEEK_API_KEY`.

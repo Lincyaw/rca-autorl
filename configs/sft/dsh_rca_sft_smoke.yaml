@@ -19,11 +19,12 @@ cluster:
 
 # Exported teacher sessions: one row per conversation
 # ({messages, tools}), which autorl.data.sft expands into one training
-# row per assistant turn. Path is relative to the rca-autorl working
-# dir; override with -p train_dataset.path=... for another export.
+# row per assistant turn. The checked-in distillation lives under
+# data/sft (git-lfs); point at a fresh export with
+# -p train_dataset.path=.runs/sft/....
 train_dataset:
   type: sft
-  path: .runs/sft/rca_sessions.jsonl
+  path: data/sft/rca_sessions.jsonl
   batch_size: 1
   shuffle: true
   pin_memory: false
@@ -32,7 +33,7 @@ train_dataset:
 
 valid_dataset:
   type: sft
-  path: .runs/sft/rca_sessions.jsonl
+  path: data/sft/rca_sessions.jsonl
   batch_size: 1
   shuffle: false
   pin_memory: false
