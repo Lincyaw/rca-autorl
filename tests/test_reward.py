@@ -58,6 +58,27 @@ EVENTS = [
 ]
 COMPLETIONS = [completion(i) for i in range(7)]
 
+# What real logs do: one response holding a note and then the next block's
+# queries, a submit turn holding no query, and a compaction request in between.
+SHARED_STEP_EVENTS = [
+    message(1),
+    call(1, "sql", statement="SELECT 1 WHERE service_name = 'geo'"),
+    message(2),
+    call(2, "take_note", content="geo"),
+    call(2, "sql", statement="SELECT 2 FROM abnormal_logs"),
+    message(3),
+    call(3, "take_note", content="nothing"),
+    message(4),
+    call(4, "submit_result", nodes=[]),
+]
+SHARED_STEP_COMPLETIONS = [
+    completion(0),
+    completion(1),
+    completion(2, purpose="compaction"),
+    completion(3),
+    completion(4),
+]
+
 
 class BlockTest(unittest.TestCase):
     def test_a_note_closes_a_block(self) -> None:
@@ -155,14 +176,73 @@ class EpisodeRewardTest(unittest.TestCase):
         self.assertEqual(episode.shaped, {})
         self.assertEqual(episode.unmapped, 0)
 
-    def test_a_broken_mapping_degrades_to_the_last_turn(self) -> None:
-        episode = self.reward(completions=COMPLETIONS[:-1])
+    def test_a_broken_mapping_degrades_to_the_last_agent_turn(self) -> None:
+        """Not simply the last completion: that can be the compaction summarizer."""
+        broken = [*COMPLETIONS[:-1], completion(6, purpose="compaction")]
+        episode = self.reward(completions=broken)
         self.assertEqual(list(episode.shaped), ["chatcmpl-5"])
-        self.assertEqual(episode.unmapped, len(COMPLETIONS) - 1)
+        self.assertEqual(episode.unmapped, len(broken))
 
-    def test_compaction_is_never_rewarded(self) -> None:
+    def test_a_turn_that_closes_and_opens_is_credited_to_what_it_closed(self) -> None:
+        episode = episode_reward(
+            events=SHARED_STEP_EVENTS,
+            completions=SHARED_STEP_COMPLETIONS,
+            submission=None,
+            truth=TRUTH,
+            shaping=1.0,
+        )
+        values = self.accumulate(episode.shaped)
+        # Rows in cache order: turn 1, turn 2, compaction, turn 3, turn 4.
+        # Block A is the geo query (rate 1.0) and closes on turn 2; block B is
+        # the logs query (rate 0.0) and closes on turn 3. Turn 2 holds both.
+        level = (1.0 + 1.0 + 0.0 + 0.0 + 0.0) / 5
+        self.assertAlmostEqual(values[0], 1.0 - level)  # block A
+        self.assertAlmostEqual(values[1], 1.0 - level)  # closes A, opens B
+        self.assertAlmostEqual(values[3], 0.0 - level)  # closes B
+
+    def test_the_submit_turn_inherits_the_last_block_rather_than_zero(self) -> None:
+        episode = episode_reward(
+            events=SHARED_STEP_EVENTS,
+            completions=SHARED_STEP_COMPLETIONS,
+            submission=None,
+            truth=TRUTH,
+            shaping=1.0,
+        )
+        values = self.accumulate(episode.shaped)
+        self.assertAlmostEqual(values[4], values[3])  # submit follows block B
+
+    def test_a_compaction_row_is_neutral(self) -> None:
+        """It is exported and trained on, so it cannot inherit a neighbour."""
+        episode = episode_reward(
+            events=SHARED_STEP_EVENTS,
+            completions=SHARED_STEP_COMPLETIONS,
+            submission=None,
+            truth=TRUTH,
+            shaping=1.0,
+        )
+        values = self.accumulate(episode.shaped)
+        self.assertAlmostEqual(values[2], episode.outcome - (1.0 + 1.0) / 5)
+        self.assertAlmostEqual(sum(values) / len(values), episode.outcome)
+
+    def test_the_discount_the_caller_declares_is_the_one_inverted(self) -> None:
+        for discount in (1.0, 0.9):
+            with self.subTest(discount=discount):
+                episode = self.reward(turn_discount=discount)
+                values = self.accumulate(episode.shaped, discount)
+                self.assertAlmostEqual(sum(values) / len(values), episode.outcome, places=6)
+
+    def test_a_compaction_row_carries_no_credit_but_is_still_addressed(self) -> None:
+        """Omitting it does not exclude it — `individual` exports and trains on it.
+
+        An unaddressed row takes reward 0.0 and then accumulates its neighbour's
+        value, which is a trained row carrying credit no policy earned. It is
+        given a value instead, with the shaping term zero.
+        """
         episode = self.reward(completions=[*COMPLETIONS, completion(7, purpose="compaction")])
-        self.assertNotIn("chatcmpl-7", episode.shaped)
+        self.assertIn("chatcmpl-7", episode.shaped)
+        values = self.accumulate(episode.shaped)
+        credited = [v for v in values[:-1] if abs(v - values[-1]) > 1e-9]
+        self.assertTrue(credited, "the agent turns should not all match the neutral row")
 
 
 if __name__ == "__main__":

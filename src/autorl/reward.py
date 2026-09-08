@@ -191,6 +191,32 @@ def outcome_score(submission: Mapping[str, Any] | None, truth: Any) -> float:
     return float(compare_model_to_ground_truth(parse_submission(submission), truth).score)
 
 
+def block_of_turn(blocks: Sequence[Block], steps: Sequence[int]) -> dict[int, int]:
+    """Which investigative move each turn belongs to.
+
+    A turn is not always inside a block's queries. One response can hold a
+    `take_note` and then the next block's first queries, so the same step closes
+    one block and opens another — it is credited to the one it closed, because
+    that is the move it committed to. And the turn that calls `submit_result`
+    holds no query at all, so it belongs to the last block that ran, not to
+    nothing: crediting it with zero would make the turn that produced the answer
+    the least-credited turn of every episode.
+    """
+    owner: dict[int, int] = {}
+    for index, block in enumerate(blocks):
+        for step in (*block.steps, block.closing_step):
+            owner.setdefault(step, index)
+    if not blocks:
+        return owner
+    closes = [block.closing_step for block in blocks]
+    for step in steps:
+        if step in owner:
+            continue
+        earlier = [i for i, close in enumerate(closes) if close <= step]
+        owner[step] = earlier[-1] if earlier else 0
+    return owner
+
+
 def episode_reward(
     *,
     events: Sequence[Mapping[str, Any]],
@@ -200,37 +226,22 @@ def episode_reward(
     shaping: float = 0.2,
     turn_discount: float = 1.0,
 ) -> Episode:
-    """Per-completion rewards for one episode, in the form the advantage reads.
-
-    Each turn's value is
-
-        r(turn) = outcome + shaping * (block rate - the episode's mean block rate)
-
-    which is a redistribution, not a bonus. The shaping term is zero-mean over
-    the episode's turns, so the mean of a trajectory's turn values is its
-    outcome and no amount of querying can raise it. That matters: the model
-    cannot see the true entity set, so the only way to raise a hit rate it does
-    not understand is to name more services per query — `WHERE service_name IN
-    ('a', ..., 'z')` scores as well as a considered filter. Addition would pay
-    for that; centering cannot.
-
-    The two halves stay readable downstream because they live on different
-    axes: `autorl.advantage` takes a trajectory's mean as its outcome and each
-    turn's deviation from that mean as its credit.
-
-    What is returned is what AReaL must *add* at each turn, not the value
-    itself. It accumulates backward (`reward[i] += reward[i+1] * discount`), so
-    the own-reward is the difference between neighbouring values.
-    """
+    """Per-completion rewards for one episode, as differences between turn values."""
     outcome = outcome_score(submission, truth)
     episode = Episode(outcome=outcome)
+    ordered = [
+        c
+        for c in sorted(completions, key=lambda c: int(c.get("ordinal", 0)))
+        if c.get("responseId")
+    ]
     by_step = step_completions(events, completions)
     if not by_step:
-        last = next(
-            (str(c["responseId"]) for c in reversed(list(completions)) if c.get("responseId")), ""
-        )
+        # Nothing to attribute to. The outcome still has to land somewhere, and
+        # the last turn the *model* took is where the submission happened — not
+        # simply the last completion, which may be the compaction summarizer.
+        agent = [c for c in ordered if c.get("purpose") == "agent"] or ordered
         episode.unmapped = len(completions)
-        episode.shaped = {last: outcome} if last else {}
+        episode.shaped = {str(agent[-1]["responseId"]): outcome} if agent else {}
         return episode
 
     entities = true_entities(truth)
@@ -239,25 +250,39 @@ def episode_reward(
     rates = [block.hit_rate(entities) for block in found]
     episode.progress = sum(rates) / len(rates) if rates else 0.0
 
-    # Every turn's value, in the order the episode took them. Centring on the
-    # mean *per turn* rather than the mean per block is what makes the shaping
-    # sum to zero: blocks hold different numbers of queries, so the average of
-    # the rates is not the average a turn sees.
     steps = sorted(by_step)
-    credit = dict.fromkeys(steps, 0.0)
-    for block, rate in zip(found, rates, strict=True):
-        for step in (*block.steps, block.closing_step):
-            if step in credit:
-                credit[step] = shaping * rate
-    level = sum(credit.values()) / len(credit) if credit else 0.0
-    values = [outcome + credit[step] - level for step in steps]
+    owner = block_of_turn(found, steps)
+    credit = (
+        {step: shaping * rates[owner[step]] for step in steps}
+        if rates
+        else dict.fromkeys(steps, 0.0)
+    )
 
-    # Backward accumulation turns own-rewards into values, so invert it.
+    # Every row the proxy cached, in the order it cached them. The compaction
+    # summarizer is one of those rows and `export_style: individual` trains on
+    # it, so it cannot be left to inherit its neighbour's value by omission:
+    # it is given the episode's outcome, which is neutral with respect to the
+    # mean the advantage decodes.
+    turn_of_id = {completion: step for step, completion in by_step.items()}
+    rows = [str(c["responseId"]) for c in ordered]
+    seen = {row for row in rows if row in turn_of_id}
+    if len(seen) != len(by_step):
+        # A mapped turn is missing from the sidecar order; the differencing
+        # below would telescope across a gap it cannot see.
+        episode.unmapped = len(by_step) - len(seen)
+        return episode
+
+    # Centre over every row, so an episode's mean row value is exactly its
+    # outcome and the group baseline is the cross-sample mean of outcomes.
+    raw = [credit.get(turn_of_id.get(row, -1), 0.0) for row in rows]
+    level = sum(raw) / len(raw) if raw else 0.0
+    values = [outcome + value - level for value in raw]
+
     own = [
         value - turn_discount * (values[i + 1] if i + 1 < len(values) else 0.0)
         for i, value in enumerate(values)
     ]
-    episode.shaped = {by_step[step]: own[i] for i, step in enumerate(steps)}
+    episode.shaped = dict(zip(rows, own, strict=True))
     return episode
 
 

@@ -186,11 +186,14 @@ Addressing a turn needs the id AReaL keys its cache by, and the session log does
 not carry it. The `rca-completions` row reads it off `finish`'s `replayState`
 — documented as "response-level adapter-private metadata (ids, native stop
 reason)", where `llm-pi-ai` puts the provider's `responseId` — and writes one
-line per request to `$DSH_HOME/rca-completions/<session>.jsonl`. `purpose`
-separates the agent's turns from the compaction summarizer. `DshWorkflow.run`
-returns `dict[completion_id, reward]`, and since AReaL accumulates backward,
-what it returns is the difference between neighbouring turn values, not the
-values. If the sidecar's agent-request count does not match the log's, the
+line per request to `$DSH_HOME/rca-completions/<session>.jsonl`. Every row the
+proxy cached is addressed, the compaction summarizer included — `individual`
+exports and trains on it, so leaving it out would not exclude it, it would let
+it accumulate its neighbour's value; it is given the episode's outcome, which is
+neutral. `DshWorkflow.run` returns `dict[completion_id, reward]`, and since
+AReaL accumulates backward with `rollout.agent.turn_discount`, what it returns
+is the difference between neighbouring turn values, not the values — the
+discount is read from that same config field rather than assumed. If the sidecar's agent-request count does not match the log's, the
 mapping is refused whole and the outcome falls back to the last turn: crediting
 the wrong turn is worse than crediting none.
 

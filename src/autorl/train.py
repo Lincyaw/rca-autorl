@@ -50,6 +50,9 @@ def main(args: list[str]) -> None:
         "model": str(config.rollout.model),
         "max_tokens": int(config.gconfig.max_new_tokens),
         "context_window": int(config.sglang.context_length or config.gconfig.max_tokens),
+        # The workflow returns differences between turn values; AReaL turns
+        # them back into values with this discount. One number, declared once.
+        "turn_discount": float(config.rollout.agent.turn_discount),
     }
     workflow_kwargs = {"econfig": econfig}
 

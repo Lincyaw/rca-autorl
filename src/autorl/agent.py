@@ -41,6 +41,11 @@ class DshWorkflow(AReaLAgentWorkflow):
         # Weight of the per-block process term against the outcome. Zero trains
         # on the graph alone.
         self.shaping = float(str(config.get("shaping") or 0.2))
+        # The same number `apply_reward_discount` uses. The rewards this
+        # workflow returns are differences between turn values, and the
+        # differencing only inverts the accumulation if both sides agree —
+        # so it is read from the config rather than assumed here.
+        self.turn_discount = float(str(config.get("turn_discount") or 1.0))
         self.dataset_root = str(config.get("dataset_root") or os.getenv("RCA_DATASET_ROOT") or "")
         self.dsh_home = (
             Path(str(config.get("dsh_home") or os.getenv("DSH_HOME") or ".runs/dsh-home"))
@@ -78,6 +83,7 @@ class DshWorkflow(AReaLAgentWorkflow):
             submission=submission,
             truth=truth_for_case(Path(data_dir)),
             shaping=self.shaping,
+            turn_discount=self.turn_discount,
         )
         logger.info(
             f"Finished RCA episode: case={case_id} finish_reason={result.finish_reason} "
