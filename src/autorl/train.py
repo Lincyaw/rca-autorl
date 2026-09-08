@@ -8,12 +8,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from areal import PPOTrainer
 from areal.api.cli_args import load_expr_config
 from datasets import Dataset
 
 from autorl.algorithm import validate_areal_v2_rloo
 from autorl.config import RCAPPOConfig
-from autorl.trainer import RcaPPOTrainer
 
 
 def load_rca_dataset(path: str) -> Dataset:
@@ -53,7 +53,7 @@ def main(args: list[str]) -> None:
     }
     workflow_kwargs = {"econfig": econfig}
 
-    with RcaPPOTrainer(
+    with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
