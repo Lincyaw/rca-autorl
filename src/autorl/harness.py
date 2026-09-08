@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -168,12 +170,32 @@ def _profile_dependencies(dsh_home: Path) -> dict[str, str]:
     return dict(dependencies) if isinstance(dependencies, dict) else {}
 
 
+def _pnpm_path(stage: Path) -> str:
+    """`PATH` for the `dsh` subprocess, with a `pnpm` on it.
+
+    `dsh plugin` shells out to `pnpm` by name and fails with
+    "pnpm not found on PATH" without one. Node ships corepack, which knows how
+    to run pnpm, but only under `corepack pnpm` — so a machine with Node and no
+    global pnpm needs a two-line shim, and needing it is a manual step between
+    a clone and a working profile. Writing the shim here removes the step; a
+    real `pnpm` already on PATH is left alone.
+    """
+    path = os.environ.get("PATH", "")
+    if shutil.which("pnpm") is not None or shutil.which("corepack") is None:
+        return path
+    shim = stage / "pnpm"
+    shim.write_text('#!/usr/bin/env bash\nexec corepack pnpm "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    return f"{stage}{os.pathsep}{path}"
+
+
 def _run_dsh(dsh_home: Path, args: list[str]) -> None:
     from deepseek_harness_runtime import resolve_bundled_launch_args
 
     argv = [*resolve_bundled_launch_args(), *args]
-    env = {**os.environ, "DSH_HOME": str(dsh_home)}
-    completed = subprocess.run(argv, env=env, capture_output=True, text=True, check=False)
+    with tempfile.TemporaryDirectory(prefix="rca-pnpm-") as stage:
+        env = {**os.environ, "DSH_HOME": str(dsh_home), "PATH": _pnpm_path(Path(stage))}
+        completed = subprocess.run(argv, env=env, capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         tail = "\n".join((completed.stderr or completed.stdout).strip().splitlines()[-8:])
         raise RuntimeError(f"`dsh {' '.join(args)}` failed (exit {completed.returncode}):\n{tail}")

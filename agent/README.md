@@ -236,8 +236,8 @@ python -m autorl.harness .runs/dsh-home --reinstall  # after editing the bundle
 `python -m autorl.fpg` — which `scripts/check.sh` verifies, since the commit
 hook runs that and nothing else.
 
-`dsh plugin` shells out to `pnpm`; on a machine with only corepack, a one-line
-shim named `pnpm` on `PATH` (`exec corepack pnpm "$@"`) is enough. The install
+`dsh plugin` shells out to `pnpm`; on a machine with only corepack, the install
+writes that shim for the subprocess itself, so this needs no setup. It
 uses `file:`, which copies the bundle into the profile package tree — the only
 place its `@deepseek-ai/dsh-tools` peer import resolves — and installs its own
 `@duckdb/node-api` dependency there, native prebuild included. An edit here

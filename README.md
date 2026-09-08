@@ -115,9 +115,10 @@ Install the bundle into the profile once, before any rollout starts:
 python -m autorl.harness .runs/dsh-rca-smoke/dsh-home     # --reinstall after editing it
 ```
 
-`dsh plugin` shells out to `pnpm`; a one-line shim (`exec corepack pnpm "$@"`) on `PATH`
-is enough. `scripts/run_smoke.sh` runs this step for you. A rollout whose profile is
-missing the bundle fails immediately with the command to run.
+`dsh plugin` shells out to `pnpm`. A machine with Node but no global pnpm needs no
+setup: the install writes a corepack shim for the subprocess and leaves a real
+`pnpm` alone. `scripts/run_smoke.sh` runs this step for you, and a rollout whose
+profile is missing the bundle fails immediately with the command to run.
 
 Each episode reuses that one `$DSH_HOME` (`econfig.dsh_home`, default `.runs/dsh-home`)
 with a fresh session id.
