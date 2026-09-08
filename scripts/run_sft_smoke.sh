@@ -4,8 +4,9 @@
 # Defaults:
 #   - config: configs/sft/dsh_rca_sft_smoke.yaml
 #       (Qwen3-4B-Thinking-2507, max_length=32768)
-#   - train_dataset.path: .runs/sft/rca_sessions.jsonl, exported from a
-#     Harness home with `python3 -m autorl.data.export <dsh-home> <out.jsonl>`
+#   - train_dataset.path: data/sft/rca_sessions.jsonl, the checked-in
+#     distillation (git-lfs; run `git lfs pull` after a fresh clone). Point at
+#     a new export with train_dataset.path=.runs/sft/...
 #
 # Overrides:
 #   RCA_DATASET_ROOT — only needed if you switch to a config that
@@ -13,7 +14,7 @@
 #   absolute data_dir.
 #
 # Any extra args are forwarded to the train entrypoint, e.g.:
-#   ./scripts/run_sft_smoke.sh -p actor.path=Qwen/Qwen3-8B-Thinking-2507
+#   ./scripts/run_sft_smoke.sh actor.path=Qwen/Qwen3-8B-Thinking-2507
 
 set -euo pipefail
 

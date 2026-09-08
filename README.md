@@ -130,8 +130,8 @@ dataset root.
 
 ```bash
 export RCA_DATASET_ROOT=$PWD/datapacks/ops-lite
-./scripts/run_smoke.sh -p train_dataset.path=$RCA_DATASET_ROOT/data.jsonl \
-  -p valid_dataset.path=$RCA_DATASET_ROOT/data.jsonl
+./scripts/run_smoke.sh train_dataset.path=$RCA_DATASET_ROOT/data.jsonl \
+  valid_dataset.path=$RCA_DATASET_ROOT/data.jsonl
 ```
 
 For every rollout, AReaL passes a proxy URL and session API key to `DshWorkflow`.
@@ -183,7 +183,7 @@ python -m autorl.data.export .runs/sft-collect/dsh-home .runs/sft/rca_sessions.j
 default, checked in through git-lfs: 50 teacher episodes over a stratified slice
 of the corpus, which `autorl.data.sft` expands into 947 training rows. Clone with
 `git lfs pull` to get it; a fresh export goes to `.runs/` and is selected with
-`-p train_dataset.path=...`.
+`train_dataset.path=...`.
 
 `--base-url` takes the same route the rollout takes — see the RL section for why
 an endpoint is declared rather than overridden. Without it the episode runs on
@@ -202,12 +202,19 @@ reasoning only when the turn follows the conversation's last `user` message; a
 whole trajectory rendered in one pass keeps `<think>` on its last turns and
 drops it from every earlier one. Ten episodes become 190 rows.
 
+`actor.mb_spec.max_tokens_per_mb` has to be at least the longest training row —
+AReaL's micro-batch packer refuses a row it cannot fit (`Values [8190] is larger
+than capacity 4096`) rather than splitting it. The checked-in distillation runs
+to 32051 tokens (p50 9890, p90 15442), which is why the config says 32768. On a
+card that cannot hold that alongside the optimizer state, cut the tail with
+`train_dataset.max_length` instead: 16384 keeps 93% of the rows, 12288 keeps 74%.
+
 Override the dataset or model with normal AReaL config patches:
 
 ```bash
 ./scripts/run_sft_smoke.sh \
-  -p train_dataset.path=/path/to/rca_sessions.jsonl \
-  -p actor.path=/path/to/model
+  train_dataset.path=/path/to/rca_sessions.jsonl \
+  actor.path=/path/to/model
 ```
 
 ## Validation
