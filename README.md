@@ -303,6 +303,33 @@ run stops. Transfer a copy that has it, and check before training:
 ls datapacks/ops-lite/cases/*/causal_graph_verified.json | wc -l   # expect 500
 ```
 
+### When GitHub is unreachable and there is no proxy
+
+Three of the four fetches have a mirror, and the fourth travels over the rsync
+that is happening anyway:
+
+```bash
+export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple  # uv
+export HF_ENDPOINT=https://hf-mirror.com                          # base model
+export npm_config_registry=https://registry.npmmirror.com         # pnpm, RL only
+
+# The fork: 31M, made on a machine that can reach it.
+#   git -C third_party/AReaL bundle create areal-rca-autorl.bundle rca-autorl
+# Then, beside the checkout that cannot:
+git config submodule.third_party/AReaL.url "$PWD/../areal-rca-autorl.bundle"
+git -c protocol.file.allow=always submodule update --init third_party/AReaL
+git -C third_party/AReaL remote set-url origin https://github.com/Lincyaw/AReaL.git
+```
+
+`protocol.file.allow` is needed because git refuses a file-transport submodule
+by default (CVE-2022-39253). The last line puts the real remote back, so a
+later `git pull` in the submodule works once the network does. The bundle
+carries whole history, not a shallow slice, so nothing about the checkout is
+degraded.
+
+`git lfs pull` also reaches GitHub. If it cannot, `data/sft/rca_sessions.jsonl`
+is 3.6M and can be copied directly over the same rsync.
+
 `python -m autorl.dataset datapacks/ops-lite --check` and `./scripts/check.sh`
 both pass without a GPU, so a machine that fails either is not yet ready to
 train.
