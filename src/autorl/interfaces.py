@@ -68,15 +68,10 @@ class GenerationAlgorithmConfig(Protocol):
     reward_normalization: bool
 
 
-class WorkflowOwnConfig(Protocol):
-    centring: str
-
-
 class AReaLRLOOConfig(Protocol):
     actor: ActorAlgorithmConfig
     gconfig: GenerationAlgorithmConfig
     critic: object | None
-    econfig: WorkflowOwnConfig
 
 
 @runtime_checkable

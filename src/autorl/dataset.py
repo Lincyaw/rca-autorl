@@ -127,7 +127,7 @@ def prepare(root: Path, *, write: bool = True) -> Report:
         if line.strip()
     ]
     report = Report()
-    rows: list[dict[str, Any]] = []
+    splits: dict[str, list[dict[str, Any]]] = {"train": [], "eval": []}
     for index, entry in enumerate(manifest):
         name = str(entry["name"])
         case_dir = root / "cases" / name
@@ -168,8 +168,7 @@ def prepare(root: Path, *, write: bool = True) -> Report:
             report.skipped.append((name, "; ".join(reasons)))
             continue
         report.incidents += 1
-        report.held_out += is_held_out(name)
-        rows.append(
+        splits["eval" if is_held_out(name) else "train"].append(
             {
                 "id": index,
                 "source": name,
@@ -186,12 +185,12 @@ def prepare(root: Path, *, write: bool = True) -> Report:
             }
         )
 
+    report.held_out = len(splits["eval"])
     if write:
-        for split, held_out in (("train", False), ("eval", True)):
+        for split, rows in splits.items():
             with (root / f"{split}.jsonl").open("w", encoding="utf-8") as handle:
                 for row in rows:
-                    if is_held_out(str(row["source"])) == held_out:
-                        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
         # Every case the manifest lists but neither split does, with the
         # reason. An excluded case is still a case — keeping the ledger beside
         # the manifest is what makes "446 of 500" auditable rather than folklore.

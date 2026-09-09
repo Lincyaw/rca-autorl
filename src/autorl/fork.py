@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from autorl.data.export import fold_surface
+from autorl.reward import accepted_call_ids
 
 SURFACE = {"assistant/message", "tool/result", "user/message"}
 
@@ -29,9 +30,8 @@ def fork_prefix(
 ) -> dict[str, Any]:
     """The parent's state at the start of `step`, or a ValueError if there is none.
 
-    `base` is the prefix the parent itself was forked from: its history comes
-    first, its notes are inherited, and its note debt carries over until the
-    parent's first note.
+    `base` is the prefix the parent itself was forked from: the walk starts
+    from its history, notes and note debt.
     """
     cut = next(
         (
@@ -55,14 +55,9 @@ def fork_prefix(
         raise ValueError("the parent episode has no incident prompt before the fork")
     del messages[prompt]
 
-    accepted = {
-        e["data"]["message"]["content"][0].get("toolCallId")
-        for e in before
-        if e.get("type") == "tool/result"
-        and not e["data"]["message"]["content"][0].get("isError", False)
-    }
-    notes: list[str] = []
-    unnoted = 0
+    accepted = accepted_call_ids(before)
+    notes: list[str] = list(base["notes"]) if base else []
+    unnoted = int(base["unnoted"]) if base else 0
     for e in before:
         if e.get("type") != "tool/call" or e["data"].get("callId") not in accepted:
             continue
@@ -73,8 +68,6 @@ def fork_prefix(
             unnoted += 1
     if base is not None:
         messages = [*base["messages"], *messages]
-        unnoted = unnoted if notes else int(base["unnoted"]) + unnoted
-        notes = [*base["notes"], *notes]
     return {"step": step, "messages": messages, "notes": notes, "unnoted": unnoted}
 
 

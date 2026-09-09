@@ -12,7 +12,7 @@ from areal import PPOTrainer
 from areal.api.cli_args import load_expr_config
 from datasets import Dataset
 
-from autorl.algorithm import validate_areal_v2_rloo
+from autorl.algorithm import validate_advantage_config
 from autorl.config import RCAPPOConfig
 
 
@@ -35,7 +35,7 @@ def load_rca_dataset(path: str) -> Dataset:
 
 def main(args: list[str]) -> None:
     config, _ = load_expr_config(args, RCAPPOConfig)
-    validate_areal_v2_rloo(config)
+    validate_advantage_config(config)
     train_dataset = load_rca_dataset(config.train_dataset.path)
     valid_dataset = (
         load_rca_dataset(config.valid_dataset.path) if config.valid_dataset is not None else None

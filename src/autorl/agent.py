@@ -7,7 +7,6 @@ import json
 import os
 import random
 import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean, pstdev
@@ -27,7 +26,13 @@ from autorl.interfaces import (
     JsonValue,
     RCASample,
 )
-from autorl.reward import episode_reward, read_completions, step_completions, truth_for_case
+from autorl.reward import (
+    accepted_call_ids,
+    episode_reward,
+    read_completions,
+    step_completions,
+    truth_for_case,
+)
 
 logger = logging.getLogger("Dsh-RCA")
 
@@ -47,7 +52,6 @@ class Sample:
     """What `rescore_group` needs from one rollout after it has run."""
 
     answer: Answer
-    outcome: float
     child_ids: set[str] = field(default_factory=set)  # every completion a fork produced
     forked_at: str | None = None  # the parent's own completion at the fork step
     siblings: list[Sibling] = field(default_factory=list)
@@ -72,6 +76,9 @@ class DshWorkflow(AReaLAgentWorkflow):
         self.centring = str(config.get("centring") or "rloo")
         if self.centring not in CENTRINGS:
             raise ValueError(f"econfig.centring must be one of {sorted(CENTRINGS)}")
+        # Under ReMax the group's first sample is decoded greedily and is the
+        # baseline (`centre`); the forked sample, when any, is the next one.
+        self.greedy: int | None = 0 if self.centring == "remax" else None
         self.temperature = config.get("temperature")
         self.fork_every = int(str(config.get("fork_every") or 0))
         self.fork_siblings = int(str(config.get("fork_siblings") or 4))
@@ -102,8 +109,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         data_dir = resolve_data_dir(data, self.dataset_root)
         session_id = f"rca-{uuid.uuid4().hex}"
         sample = _sample_index()
-        # Under ReMax the group's first sample is the greedy baseline.
-        temperature = 0.0 if self.centring == "remax" and sample == 0 else self.temperature
+        temperature = 0.0 if sample == self.greedy else self.temperature
         result = await asyncio.to_thread(
             self._run_episode, incident, data_dir, str(base_url), api_key, session_id, temperature
         )
@@ -130,17 +136,23 @@ class DshWorkflow(AReaLAgentWorkflow):
             f"submitted={submission is not None} outcome={outcome:.3f} "
             f"rewarded={len(episode.shaped)} unmapped={episode.unmapped}"
         )
-        record = Sample(answer, outcome)
+        record = Sample(answer)
         rewards = dict(episode.shaped)
-        if self._forks(sample):
-            fork = await self._fork(
-                result, completions, incident, data_dir, str(base_url), api_key, session_id, truth
+        if self._forks(sample, data):
+            await self._fork(
+                record,
+                result,
+                completions,
+                incident,
+                data_dir,
+                str(base_url),
+                api_key,
+                session_id,
+                truth,
             )
-            if fork is not None:
-                record.forked_at, record.siblings, record.child_ids = fork
-                # The children's rows are placed here and valued in
-                # `rescore_group`; zero keeps the parent's accumulation intact.
-                rewards.update(dict.fromkeys(record.child_ids, 0.0))
+            # The children's rows are placed here and valued in
+            # `rescore_group`; zero keeps the parent's accumulation intact.
+            rewards.update(dict.fromkeys(record.child_ids, 0.0))
         # Keyed by sample index, which AReaL sets before the episode runs.
         self._samples[sample] = record
         # A dict addresses turns by the completion the proxy cached; a float
@@ -181,9 +193,9 @@ class DshWorkflow(AReaLAgentWorkflow):
                 mean(weighted_score(a, weights) for a in sibling.answers)
                 for sibling in record.siblings
             ]
-            for index, sibling in enumerate(record.siblings):
-                others = values[:index] + values[index + 1 :]
-                fork_advantage = values[index] - mean(others) if others else 0.0
+            for sibling, fork_advantage in zip(
+                record.siblings, centre(values, "rloo"), strict=True
+            ):
                 if sibling.first in result:
                     # Spec §5: the siblings replace the parent's turn at 1/K_b each.
                     result[sibling.first].reward = fork_advantage / len(record.siblings)
@@ -191,15 +203,20 @@ class DshWorkflow(AReaLAgentWorkflow):
                 result[record.forked_at].reward = 0.0
         return results
 
-    def _forks(self, sample: int) -> bool:
-        """Whether this sample is the one its group forks (spec §4, §6 budget)."""
+    def _forks(self, sample: int, data: RCASample) -> bool:
+        """Whether this sample is the one its group forks (spec §4, §6 budget).
+
+        One sample of every `fork_every`-th case, by the case's own manifest
+        index, so the same cases fork on every run.
+        """
         if not self.fork_every:
             return False
-        designated = 1 if self.centring == "remax" else 0
-        return sample == designated and hash(_task_id()) % self.fork_every == 0
+        designated = 0 if self.greedy is None else self.greedy + 1
+        return sample == designated and int(data.get("id", 0)) % self.fork_every == 0
 
     async def _fork(
         self,
+        record: Sample,
         parent: RunResult,
         completions: list[dict[str, Any]],
         incident: str,
@@ -208,7 +225,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         api_key: str,
         session_id: str,
         truth: Any,
-    ) -> tuple[str | None, list[Sibling], set[str]] | None:
+    ) -> None:
         """Sample K_b responses at one step of the parent and run each to the end.
 
         The step is drawn uniformly, which is the random-point control of
@@ -218,58 +235,60 @@ class DshWorkflow(AReaLAgentWorkflow):
         """
         candidates = steps(parent.events)
         if len(candidates) < 2:
-            return None
+            return
         step = random.Random(session_id).choice(candidates[1:])
         prefix = fork_prefix(parent.events, step)
-        forked_at = step_completions(parent.events, completions).get(step)
+        record.forked_at = step_completions(parent.events, completions).get(step)
 
-        async def continue_from(prefix: dict[str, Any], child_id: str) -> RunResult:
-            path = self.dsh_home / "rca-forks" / f"{child_id}.json"
+        async def run_children(
+            prefix: dict[str, Any], name: str, count: int
+        ) -> list[tuple[RunResult, list[str], Answer]]:
+            """`count` episodes from one restored state, side by side."""
+            path = self.dsh_home / "rca-forks" / f"{name}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(prefix), encoding="utf-8")
-            return await asyncio.to_thread(
-                self._run_episode,
-                incident,
-                data_dir,
-                base_url,
-                api_key,
-                child_id,
-                self.temperature,
-                str(path),
-            )
 
-        async def sibling(index: int) -> tuple[Sibling, set[str]]:
-            child_id = f"{session_id}-s{step}b{index}"
-            child = await continue_from(prefix, child_id)
-            rows = read_completions(self.dsh_home, child_id)
-            first = next((str(c["responseId"]) for c in rows if c.get("purpose") == "agent"), None)
-            ids = {str(c["responseId"]) for c in rows if c.get("responseId")}
-            answers = [answer_of(submitted_result(child), truth)]
+            async def one(index: int) -> tuple[RunResult, list[str], Answer]:
+                child_id = f"{name}c{index}"
+                result = await asyncio.to_thread(
+                    self._run_episode,
+                    incident,
+                    data_dir,
+                    base_url,
+                    api_key,
+                    child_id,
+                    self.temperature,
+                    str(path),
+                )
+                rows = read_completions(self.dsh_home, child_id)
+                ids = [str(c["responseId"]) for c in rows if c.get("responseId")]
+                return result, ids, answer_of(submitted_result(result), truth)
+
+            try:
+                return list(await asyncio.gather(*(one(i) for i in range(count))))
+            finally:
+                path.unlink(missing_ok=True)
+
+        siblings = await run_children(prefix, f"{session_id}-s{step}", self.fork_siblings)
+        for index, (child, ids, answer) in enumerate(siblings):
+            answers = [answer]
+            record.child_ids.update(ids)
             # The response is the child's first step; later continuations
             # branch from its second, when it has one.
-            for extra in range(1, self.fork_continuations):
-                if len(steps(child.events)) < 2:
-                    break
-                grandchild_id = f"{child_id}m{extra}"
-                grandchild = await continue_from(
-                    fork_prefix(child.events, 2, base=prefix), grandchild_id
+            if self.fork_continuations > 1 and len(steps(child.events)) > 1:
+                more = await run_children(
+                    fork_prefix(child.events, 2, base=prefix),
+                    f"{session_id}-s{step}c{index}m",
+                    self.fork_continuations - 1,
                 )
-                ids |= {
-                    str(c["responseId"])
-                    for c in read_completions(self.dsh_home, grandchild_id)
-                    if c.get("responseId")
-                }
-                answers.append(answer_of(submitted_result(grandchild), truth))
-            return Sibling(first, answers), ids
-
-        outcomes = await asyncio.gather(*(sibling(b) for b in range(self.fork_siblings)))
-        siblings = [s for s, _ in outcomes]
-        child_ids = set().union(*(ids for _, ids in outcomes))
+                for _, grandchild_ids, grandchild_answer in more:
+                    record.child_ids.update(grandchild_ids)
+                    answers.append(grandchild_answer)
+            record.siblings.append(Sibling(ids[0] if ids else None, answers))
         logger.info(
-            f"Forked {session_id} at step {step}: {len(siblings)} siblings, "
-            f"{len(child_ids)} completions"
+            f"Forked {session_id} at step {step}: {len(record.siblings)} siblings, "
+            f"{len(record.child_ids)} completions"
         )
-        return forked_at, siblings, child_ids
 
     def _run_episode(
         self,
@@ -310,17 +329,21 @@ CENTRINGS = {"rloo", "grpo", "remax"}
 
 
 def centre(scores: list[float], method: str) -> list[float]:
-    """The advantages of a group's scores, by the centring of spec §3.2."""
+    """The advantages of a group's scores, by the centring of spec §3.2.
+
+    Computed here rather than by the framework's group normalization, which
+    writes one value to every row of a trajectory and would overwrite the
+    per-row values a fork needs (§4).
+    """
+    if len(scores) < 2:
+        return [0.0] * len(scores)
     if method == "remax":
         return [0.0] + [score - scores[0] for score in scores[1:]]
     if method == "grpo":
         mu = mean(scores)
         sd = pstdev(scores)
         return [(score - mu) / sd if sd > 0 else 0.0 for score in scores]
-    return [
-        score - mean(scores[:i] + scores[i + 1 :]) if len(scores) > 1 else 0.0
-        for i, score in enumerate(scores)
-    ]
+    return [score - mean(scores[:i] + scores[i + 1 :]) for i, score in enumerate(scores)]
 
 
 def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:
@@ -342,19 +365,6 @@ def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:
     raise ValueError(
         "RCA sample needs data_dir, or datapack_name with econfig.dataset_root/RCA_DATASET_ROOT"
     )
-
-
-def accepted_call_ids(events: Sequence[dict[str, Any]]) -> set[str]:
-    """Call ids whose `tool/result` is not an error."""
-    accepted = set()
-    for event in events:
-        if event.get("type") != "tool/result":
-            continue
-        block = event.get("data", {}).get("message", {}).get("content", [{}])[0]
-        call_id = block.get("toolCallId")
-        if isinstance(call_id, str) and not block.get("isError", False):
-            accepted.add(call_id)
-    return accepted
 
 
 def submitted_result(result: RunResult) -> dict[str, JsonValue] | None:
@@ -410,16 +420,6 @@ def _sample_index() -> int:
         return int(getattr(workflow_context.get(), "sample_idx", 0) or 0)
     except Exception:
         return 0
-
-
-def _task_id() -> str:
-    """The prompt this episode belongs to, as AReaL names it; "" when nothing says."""
-    try:
-        from areal.infra import workflow_context
-
-        return str(getattr(workflow_context.get(), "task_id", "") or "")
-    except Exception:
-        return ""
 
 
 def answer_of(submission: dict[str, JsonValue] | None, truth: Any) -> Answer:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from autorl.interfaces import AReaLRLOOConfig
 
 
-def validate_areal_v2_rloo(config: AReaLRLOOConfig) -> None:
+def validate_advantage_config(config: AReaLRLOOConfig) -> None:
     """Fail fast unless AReaL v2 leaves the advantage to the workflow.
 
     The centring of spec §3.2 (RLOO, GRPO, ReMax) is computed per trajectory in
@@ -23,8 +23,6 @@ def validate_areal_v2_rloo(config: AReaLRLOOConfig) -> None:
         errors.append("actor.reward_norm must be null: the workflow centres the group itself")
     if config.actor.adv_norm is not None:
         errors.append("actor.adv_norm must be null")
-    if config.econfig.centring not in {"rloo", "grpo", "remax"}:
-        errors.append("econfig.centring must be rloo, grpo, or remax")
     if float(config.actor.discount) != 1.0 or float(config.actor.gae_lambda) != 1.0:
         errors.append("actor.discount and actor.gae_lambda must both equal 1")
     if config.critic is not None:
@@ -33,4 +31,4 @@ def validate_areal_v2_rloo(config: AReaLRLOOConfig) -> None:
         raise ValueError("invalid RCA advantage config: " + "; ".join(errors))
 
 
-__all__ = ["validate_areal_v2_rloo"]
+__all__ = ["validate_advantage_config"]

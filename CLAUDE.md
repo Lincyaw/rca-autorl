@@ -34,7 +34,7 @@ third_party/AReaL    fork Lincyaw/AReaL 分支 rca-autorl（多 rescore_group ho
 
 - RL 路径在单卡上端到端跑通过（rollout → reward → rescore_group → 一步 PPO 更新），但还没观察到非零 advantage
 - reward = fpg 约定的三轴图 F1（method spec §2）；advantage = sibling 难度加权后的 RLOO（§3，`econfig.difficulty` 关掉即 flat 分数的消融臂）。没有 cost，没有 turn-level credit
-- advantage 全部由 workflow 算（`actor.reward_norm` 恒 null）：`econfig.centring` 选 rloo / grpo / remax，ReMax 时组内第 0 个 sample 以 temperature 0 跑作 baseline。temperature 由 `gconfig.temperature` 经 `RCA_TEMPERATURE` 传给 harness 的 `rca-sampling` 路由
+- advantage 全部由 workflow 算（`actor.reward_norm` 恒 null）：`econfig.centring` 选 rloo / grpo / remax，ReMax 时组内第 0 个 sample 以 temperature 0 跑作 baseline。temperature 由 `gconfig.temperature` 经 `RCA_TEMPERATURE` 传给 harness，bundle 在 `agent/request` waterfall 里加进 call config
 - fork（§4）已实现：`econfig.fork_every` N 表示每 N 个 prompt 的一个 sample 在随机一步分出 `fork_siblings` 个回答、各跑 `fork_continuations` 次；状态靠 `autorl.fork` 的 prefix 文件重建（dsh 没有 resume）。fork 点是随机的（Ablation 2 的对照臂），draft-disagreement 没做
 - `rescore_group` 拿到的是导出后已累加的每行 value，写进去的就是最终值；09-08 的原版只改最后一行是错的
 - SFT 数据：45 条 teacher episode 已 check in（原 50 条，去掉了 5 条落在 held-out 划分的）；下一步是 SFT 到一个会提交 graph 的 checkpoint，再测 within-group variance

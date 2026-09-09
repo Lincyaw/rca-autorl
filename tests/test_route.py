@@ -23,6 +23,14 @@ class RouteTest(unittest.TestCase):
         unset = model_route(scenario="rca", model="m", base_url="http://x", api_key="k")
         self.assertNotIn("RCA_TEMPERATURE", unset.env)
 
+    def test_the_bundle_applies_both_on_any_route(self) -> None:
+        """No endpoint given, still the deepseek route, still the same variables."""
+        route = model_route(
+            scenario="rca", model="m", base_url="", api_key="", temperature=0.5, fork="/p"
+        )
+        self.assertEqual(route.env["RCA_TEMPERATURE"], "0.5")
+        self.assertEqual(route.env["RCA_FORK_PREFIX"], "/p")
+
 
 if __name__ == "__main__":
     unittest.main()

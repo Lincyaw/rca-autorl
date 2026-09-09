@@ -32,7 +32,7 @@ BUNDLE_NAME = "@rca-autorl/dsh-rca-harness"
 PROFILE = "sdk-minimal"
 
 GATEWAY_SCENARIO = "openai-gateway"
-GATEWAY_ROUTE = "gateway-rl"  # `gateway` plus the declared temperature; see the patch
+GATEWAY_ROUTE = "gateway"
 DEEPSEEK_ROUTE = "deepseek-official"
 
 
@@ -74,19 +74,18 @@ def model_route(
     endpoint differs.
     """
     env = {"DSH_CONTEXT_WINDOW": str(context_window)} if context_window else {}
-    patches = (scenario_patch(scenario),)
-    if not base_url:
-        return ModelRoute(DEEPSEEK_ROUTE, model, patches, env)
-    # The temperature is the trainer's number, passed through rather than set
-    # here: `gconfig.temperature` on the rollout path, whatever the collector
-    # was told, and zero for a greedy baseline. Unset, the route leaves the
-    # request without one and the endpoint's default applies.
+    # Both are the bundle's to apply, on any route. The temperature is the
+    # trainer's number, passed through rather than set here: `gconfig` on the
+    # rollout path, the collector's flag, zero for a greedy baseline; unset,
+    # the endpoint's default applies. The fork prefix is a file from
+    # `autorl.fork` holding the parent's history, notes and note debt.
     if temperature is not None:
         env["RCA_TEMPERATURE"] = repr(float(temperature))
     if fork:
-        # A prefix file from `autorl.fork`: the bundle seeds the notebook and
-        # the ledger from it, the sampling route splices its messages.
         env["RCA_FORK_PREFIX"] = str(fork)
+    patches = (scenario_patch(scenario),)
+    if not base_url:
+        return ModelRoute(DEEPSEEK_ROUTE, model, patches, env)
     return ModelRoute(
         GATEWAY_ROUTE,
         model,

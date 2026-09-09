@@ -19,7 +19,7 @@ agent/
     src/compaction.js  compaction-basic with the RCA checkpoint template
     src/pruner.js      note-aware tool-result pruner
     src/completions.js records the provider response id per LLM request
-    src/sampling.js    a route that is another route plus a temperature
+    src/sampling.js    the trainer's temperature, and the route a forked episode continues on
     src/prompts.js     every model-facing string
     src/debug.js       env-gated trace
   profiles/
@@ -134,17 +134,12 @@ compaction summarizer's.
 
 The harness builds each model call from `AgentOptions`, which has no sampling
 field, so a request leaves without a temperature and the endpoint's default
-applies. The adapters forward `options.temperature` when it is set; what is
-missing is a way to set it, and the `llm/stream` middleware cannot, because
-the runtime dispatches the options it prepared and refuses a changed config.
-
-`sampling.js` registers `gateway-rl`, a route whose adapter prepares the same
-call on `gateway` with the temperature in the call config from the start, so
-the runtime's equality check holds. The number is `RCA_TEMPERATURE` in the
-route's environment: `gconfig.temperature` on the rollout path, `--temperature`
-on the collector, zero for a greedy baseline, unset for the endpoint's
-default. The inner call streams through the same seam a second time, so
-`completions.js` writes a response id once.
+applies. The `agent/request` waterfall yields the call config before the
+runtime prepares the call, and `sampling.js` adds the temperature there, on
+whatever route the launch uses. The number is `RCA_TEMPERATURE` in the
+launch's environment: `gconfig.temperature` on the rollout path,
+`--temperature` on the collector, zero for a greedy baseline, unset for the
+endpoint's default.
 
 ## Forking
 
@@ -152,10 +147,14 @@ The harness has no session resume, so a fork (spec §4) rebuilds the state
 instead. `autorl.fork.fork_prefix` folds the parent's session log up to the
 fork step the way the harness folds it, compaction included, and writes the
 messages the model saw, the notes it took, and how many results its last note
-had not covered. The path arrives as `RCA_FORK_PREFIX`: the `gateway-rl`
-adapter splices the messages after the child's own incident prompt on every
-request, `index.js` seeds the notebook, and the ledger starts at the parent's
-debt. DuckDB is rebuilt from the snapshot as always.
+had not covered. The path arrives as `RCA_FORK_PREFIX`. The history is the
+one thing no waterfall may change, so `sampling.js` switches a forked episode
+to the `rca-fork` route, whose adapter prepares the call on the launch's own
+route and streams it with the parent's messages spliced in after the child's
+incident prompt; `index.js` seeds the notebook, and the ledger starts at the
+parent's debt. DuckDB is rebuilt from the snapshot as always. That inner call
+streams through `llm/stream` a second time, so `completions.js` writes a
+response id once.
 
 The child's own session log holds only what the child did, which is what the
 reward mapping reads. Two things the child does not inherit: the parent's

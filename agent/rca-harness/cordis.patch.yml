@@ -105,6 +105,8 @@
         # note-aware pruner protects.
         noteEvery: 10
         noteLimit: 20
-        # A forked episode's inherited notebook and note debt (spec §4), from
-        # the prefix file `autorl.fork` writes; unset for an ordinary episode.
+        # The trainer's sampling temperature, or the endpoint's default when
+        # unset; and, for a forked episode (spec §4), the prefix file
+        # `autorl.fork` writes with the parent's history, notes and note debt.
+        temperature: !!js process.env.RCA_TEMPERATURE
         fork: !!js process.env.RCA_FORK_PREFIX

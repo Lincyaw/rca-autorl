@@ -83,10 +83,4 @@ def weighted_score(answer: Answer, weights: dict[str, dict[str, float]]) -> floa
     return total
 
 
-def group_scores(answers: Sequence[Answer]) -> list[float]:
-    """Difficulty-weighted scores for one prompt's samples, from the samples alone."""
-    weights = {axis: element_weights(answers, axis) for axis, _ in AXES}
-    return [weighted_score(answer, weights) for answer in answers]
-
-
-__all__ = ["AXES", "Answer", "element_weights", "group_scores", "weighted_score"]
+__all__ = ["AXES", "Answer", "element_weights", "weighted_score"]

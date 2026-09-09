@@ -85,6 +85,19 @@ def step_completions(
     return dict(zip(steps, ids, strict=True))
 
 
+def accepted_call_ids(events: Sequence[dict[str, Any]]) -> set[str]:
+    """Call ids whose `tool/result` is not an error."""
+    accepted = set()
+    for event in events:
+        if event.get("type") != "tool/result":
+            continue
+        block = event.get("data", {}).get("message", {}).get("content", [{}])[0]
+        call_id = block.get("toolCallId")
+        if isinstance(call_id, str) and not block.get("isError", False):
+            accepted.add(call_id)
+    return accepted
+
+
 def read_completions(dsh_home: Path, session_id: str) -> list[dict[str, Any]]:
     """The sidecar the `rca-completions` row wrote for one session."""
     path = dsh_home / "rca-completions" / f"{session_id}.jsonl"
@@ -133,19 +146,9 @@ def episode_reward(
     return episode
 
 
-def _arguments(data: Mapping[str, Any]) -> dict[str, Any]:
-    raw = data.get("arguments")
-    if not isinstance(raw, str):
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 __all__ = [
     "Episode",
+    "accepted_call_ids",
     "episode_reward",
     "load_truth",
     "read_completions",

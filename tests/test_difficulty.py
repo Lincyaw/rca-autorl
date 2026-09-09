@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import unittest
 
-from autorl.difficulty import Answer, element_weights, group_scores, weighted_score
+from autorl.difficulty import AXES, Answer, element_weights, weighted_score
 
 TRUTH = {
     "roots": frozenset({"svc:hard"}),
     "subjects": frozenset({"svc:told", "svc:middle", "svc:hard"}),
     "edges": frozenset(),
 }
+
+
+def group_scores(group: list[Answer]) -> list[float]:
+    weights = {axis: element_weights(group, axis) for axis, _ in AXES}
+    return [weighted_score(a, weights) for a in group]
 
 
 def answer(found_subjects: set[str], found_roots: set[str] = frozenset()) -> Answer:
@@ -98,9 +103,7 @@ class WorkflowHookTest(unittest.TestCase):
     def samples(self, *answers) -> None:
         from autorl.agent import Sample
 
-        self.workflow._samples = {
-            i: Sample(a, weighted_score(a, {})) for i, a in enumerate(answers)
-        }
+        self.workflow._samples = {i: Sample(a) for i, a in enumerate(answers)}
 
     def run_hook(self, results: list[object]) -> object:
         import asyncio
@@ -150,12 +153,11 @@ class WorkflowHookTest(unittest.TestCase):
         told, hard = answer({"svc:told"}), answer({"svc:told", "svc:hard"})
         parent = Sample(
             told,
-            0.0,
             child_ids={"b0", "b0m", "b1", "b1m"},
             forked_at="c1",
             siblings=[Sibling("b0", [hard, hard]), Sibling("b1", [told, told])],
         )
-        self.workflow._samples = {0: parent, 1: Sample(told, 0.0)}
+        self.workflow._samples = {0: parent, 1: Sample(told)}
         first = self.result(3, 0.2)
         first.update({key: self.interaction(0.0) for key in ("b0", "b0m", "b1", "b1m")})
         results = [first, self.result(2, 0.2)]

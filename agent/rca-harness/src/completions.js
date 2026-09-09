@@ -39,9 +39,9 @@ export function apply(ctx, config = {}) {
   // an ordinal shared across them would leave gaps in each one's file — which
   // is exactly the ordering the trainer reads to place a reward on a turn.
   const ordinals = new Map()
-  // A route that delegates to another (the rca-sampling row) streams the same
-  // completion through this seam twice, once per layer; the trainer counts
-  // one request per agent step, so a response id is written once.
+  // A forked episode's route delegates to the launch's own and streams the
+  // same completion through this seam twice, once per layer; the trainer
+  // counts one request per agent step, so a response id is written once.
   const seen = new Map()
 
   ctx.on('llm/stream', (options, next) => record(options, next()), { global: true })
