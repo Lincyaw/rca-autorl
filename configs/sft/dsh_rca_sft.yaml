@@ -1,0 +1,123 @@
+experiment_name: autorl-dsh-rca-sft
+trial_name: qwen3-4b-thinking-1epoch
+
+seed: 1
+total_train_epochs: 1
+# Declared null rather than omitted: hydra refuses to override a key the
+# config does not have (`Could not override 'total_train_steps'`), so
+# cutting a run short would otherwise need `+total_train_steps=N`.
+total_train_steps: null
+tokenizer_path: ${actor.path}
+
+scheduler:
+  type: local
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: .runs/dsh-rca-sft
+  name_resolve:
+    type: nfs
+    nfs_record_root: .runs/dsh-rca-sft/name_resolve
+
+# Same corpus and expansion as the smoke config: one row per assistant
+# turn, 947 of them from the checked-in 50-session distillation.
+#
+# batch_size must be a multiple of the FSDP data-parallel width — a batch
+# is split across ranks, so batch_size=1 on 8 ranks fails outright with
+# "Number of items (1) must be >= K (8)".
+#
+# 947 is prime, so no batch_size above 1 divides it and every epoch ends
+# on a ragged batch. `drop_last` is what decides where that tail goes:
+# train drops it by default, but ValidDatasetConfig defaults it to False,
+# and the eval dispatcher then pads the short batch with zero-mask dummy
+# items that reach the attention kernel as 0-element tensors ("cannot
+# reshape tensor of 0 elements into shape [1, 0, -1, 128]"). It is set
+# here explicitly on both, because for eval the default is the crash.
+train_dataset:
+  type: sft
+  path: data/sft/rca_sessions.jsonl
+  batch_size: 8
+  shuffle: true
+  pin_memory: false
+  num_workers: 0
+  drop_last: true
+  max_length: 32768
+
+valid_dataset:
+  type: sft
+  path: data/sft/rca_sessions.jsonl
+  batch_size: 8
+  shuffle: false
+  pin_memory: false
+  num_workers: 0
+  drop_last: true
+  max_length: 32768
+
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
+
+actor:
+  # Pure data parallel over 8 cards. A 4B model shards its weights and
+  # optimizer state wide enough that 32k rows fit; on one card the same
+  # row OOMs at ~step 160 with 5 GiB free of 80.
+  backend: "fsdp:d8p1t1"
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  # Qwen3-4B-Thinking-2507 — native <think> tag support, vocab/template
+  # matches the distill output's Qwen/GLM shape (assistant.content
+  # carries <think>...</think>; tool_calls list carries the terminal
+  # submit_events / submit_verdict call).
+  path: Qwen/Qwen3-4B-Thinking-2507
+  init_from_scratch: false
+  gradient_checkpointing: true
+  dtype: bfloat16
+  attn_impl: sdpa
+  mb_spec:
+    max_tokens_per_mb: 32768
+  optimizer:
+    type: adam
+    lr: 1e-5
+    weight_decay: 0.05
+    beta1: 0.9
+    beta2: 0.95
+    eps: 1e-5
+    lr_scheduler_type: cosine
+    gradient_clipping: 1.0
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      cpu: 4
+      mem: 16
+      cmd: python3 -m areal.infra.rpc.rpc_server
+      env_vars: {}
