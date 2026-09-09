@@ -34,14 +34,12 @@ template put it.
 
 from __future__ import annotations
 
-import multiprocessing as mp
-import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from datasets import Dataset
 
-from .samples import load_manifest_samples
+from .samples import read_jsonl
 
 
 def build_sft_dataset_from_manifest(
@@ -51,18 +49,11 @@ def build_sft_dataset_from_manifest(
     max_length: int | None = None,
 ) -> Dataset:
     """Build a ``datasets.Dataset`` of ``{input_ids, loss_mask}`` rows."""
-    samples = load_manifest_samples(manifest_path)
-    num_proc = _tokenize_num_proc()
-    if num_proc > 1:
-        rows = _convert_samples_parallel(
-            samples, tokenizer, max_length=max_length, num_proc=num_proc
-        )
-    else:
-        rows = [
-            row
-            for sample in samples
-            for row in convert_sample(sample, tokenizer=tokenizer, max_length=max_length)
-        ]
+    rows = [
+        row
+        for sample in read_jsonl(manifest_path)
+        for row in convert_sample(sample, tokenizer=tokenizer, max_length=max_length)
+    ]
     if not rows:
         raise TypeError(
             f"SFT manifest produced no usable rows (max_length={max_length}): {manifest_path}"
@@ -138,45 +129,6 @@ def _render(
     if not isinstance(text, str):
         raise TypeError("tokenizer chat template did not return text")
     return text
-
-
-_WORKER_TOKENIZER: Any | None = None
-_WORKER_MAX_LENGTH: int | None = None
-
-
-def _tokenize_num_proc() -> int:
-    raw = os.environ.get("SFT_TOKENIZE_NUM_PROC", "1")
-    try:
-        value = int(raw)
-    except ValueError:
-        value = 1
-    return max(1, value)
-
-
-def _convert_samples_parallel(
-    samples: Sequence[Mapping[str, Any]],
-    tokenizer: Any,
-    *,
-    max_length: int | None,
-    num_proc: int,
-) -> list[dict[str, Any]]:
-    if os.name != "posix":
-        raise ValueError("SFT_TOKENIZE_NUM_PROC>1 requires POSIX fork semantics")
-
-    global _WORKER_TOKENIZER, _WORKER_MAX_LENGTH
-    _WORKER_TOKENIZER = tokenizer
-    _WORKER_MAX_LENGTH = max_length
-
-    chunksize = max(1, int(os.environ.get("SFT_TOKENIZE_CHUNKSIZE", "8")))
-    with mp.get_context("fork").Pool(processes=num_proc) as pool:
-        converted = pool.imap(_convert_sample_worker, samples, chunksize=chunksize)
-        return [row for rows in converted for row in rows]
-
-
-def _convert_sample_worker(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
-    if _WORKER_TOKENIZER is None:
-        raise RuntimeError("SFT tokenizer worker was not initialized")
-    return convert_sample(sample, tokenizer=_WORKER_TOKENIZER, max_length=_WORKER_MAX_LENGTH)
 
 
 __all__ = ["build_sft_dataset_from_manifest", "convert_sample"]

@@ -9,12 +9,9 @@ arrangement that drifted before. These fixtures run through both.
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 import unittest
-from pathlib import Path
 
+from node import run_node_module
 from pydantic import ValidationError
 
 from autorl.fpg import VOCABULARY_JS, entity_ref_pattern, parse_submission, schema
@@ -161,21 +158,11 @@ class SubmitResultContractTest(unittest.TestCase):
                     parse_submission(payload)
 
     def test_the_tool_agrees_with_the_verifier(self) -> None:
-        node_bin = shutil.which("node")
-        if node_bin is None:
-            self.skipTest("node is not on PATH")
         driven = [case for case in CASES if case[0] not in SCHEMA_ENFORCED]
-        script = NODE_HARNESS % json.dumps(str(CONTRACT_JS))
-        completed = subprocess.run(
-            [node_bin, "--input-type=module", "-e", script],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=Path(__file__).resolve().parents[1],
-            env={**os.environ, "FIXTURES": json.dumps([case[1] for case in driven])},
+        verdicts = run_node_module(
+            NODE_HARNESS % json.dumps(str(CONTRACT_JS)),
+            FIXTURES=json.dumps([case[1] for case in driven]),
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        verdicts = json.loads(completed.stdout)
         for (name, _payload, accepted), verdict in zip(driven, verdicts, strict=True):
             with self.subTest(name):
                 self.assertEqual(verdict["accepted"], accepted, verdict.get("reason", ""))

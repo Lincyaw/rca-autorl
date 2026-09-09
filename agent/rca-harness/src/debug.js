@@ -10,7 +10,7 @@ import { appendFileSync } from 'node:fs'
  */
 const target = process.env.RCA_HARNESS_LOG ?? ''
 
-export const debugEnabled = target.length > 0
+const debugEnabled = target.length > 0
 
 export function trace(event, data = {}) {
   if (!debugEnabled) return

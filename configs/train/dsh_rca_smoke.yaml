@@ -166,10 +166,9 @@ sglang:
   context_length: 32768
   mem_fraction_static: 0.7
 
-# RL data — directly consumes the processed RCA dataset. Each
-# row carries {id/source, question, ground_truth, fault_type,
-# datapack_name}; DshWorkflow resolves data_dir by joining
-# econfig.dataset_root with datapack_name. The default is the corpus this
+# RL data — the manifest `python -m autorl.dataset` writes. Each row carries
+# {id, source, datapack_name, question, ...}; DshWorkflow resolves the
+# snapshot by joining econfig.dataset_root with datapack_name. The default is the corpus this
 # repository prepares — `python -m autorl.dataset datapacks/ops-lite` writes it,
 # and the path is relative so a checkout is self-contained. Point elsewhere with
 # `train_dataset.path=...`.

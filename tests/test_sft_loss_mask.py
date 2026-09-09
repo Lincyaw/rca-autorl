@@ -20,7 +20,6 @@ import importlib.machinery
 import sys
 import types
 import unittest
-from pathlib import Path
 
 
 def _ensure_stubs() -> None:
@@ -39,9 +38,6 @@ def _ensure_stubs() -> None:
 
 _ensure_stubs()
 
-src_path = Path(__file__).resolve().parents[1] / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
 
 from autorl.data.sft import convert_sample  # noqa: E402
 

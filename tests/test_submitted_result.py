@@ -9,16 +9,9 @@ one comes first. Three of the first ten collected episodes took that path.
 
 from __future__ import annotations
 
-import sys
-import types
 import unittest
-from pathlib import Path
 
-src_path = Path(__file__).resolve().parents[1] / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
-
-from autorl.agent import submitted_result  # noqa: E402
+from autorl.reward import submitted_result
 
 
 def _call(call_id: str, arguments: str) -> dict[str, object]:
@@ -41,7 +34,7 @@ ACCEPTED = '{"nodes": [{"id": "n1"}], "edges": [], "root_causes": ["n1"]}'
 
 class SubmittedResultTests(unittest.TestCase):
     def _run(self, events: list[dict[str, object]]) -> dict[str, object] | None:
-        return submitted_result(types.SimpleNamespace(events=events))
+        return submitted_result(events)
 
     def test_rejected_attempt_is_skipped_for_the_retry(self) -> None:
         got = self._run(

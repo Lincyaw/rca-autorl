@@ -3,7 +3,6 @@ import { RCA_INSTRUCTION } from './prompts.js'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { trace } from './debug.js'
 
-
 /**
  * `compaction-basic` with the RCA checkpoint template.
  *
@@ -16,35 +15,9 @@ import { trace } from './debug.js'
  * prefix cache instead of re-reading the whole episode.
  */
 export class RcaCompactionEngine extends BasicCompactionEngine {
-  async compactIfNeeded(agent, trigger, signal) {
-    try {
-      // The two inputs of the pressure decision, so a "nothing to do" answer is
-      // attributable: what the harness believes the window is, and what it
-      // believes the conversation currently costs.
-      const routed = agent.session.requestHeader()?.config
-      const info = routed === undefined
-        ? undefined
-        : await this.ctx.llm.resolveModelInfo(routed.provider, routed.model, signal)
-      const measured = this.ctx.tokenMeter.measure(agent.session)
-      const result = await super.compactIfNeeded(agent, trigger, signal)
-      trace('compactIfNeeded', {
-        trigger,
-        compacted: result !== null,
-        routed: routed === undefined ? null : `${routed.provider}/${routed.model}`,
-        contextWindow: info?.context?.contextWindow ?? null,
-        thresholdRatio: this.config.thresholdRatio,
-        measured: typeof measured === 'number' ? measured : JSON.stringify(measured).slice(0, 200),
-      })
-      return result
-    } catch (error) {
-      trace('compactIfNeeded:error', { trigger, message: String(error?.message ?? error) })
-      throw error
-    }
-  }
-
   async summarize(input, agent, signal) {
     trace('summarize:start', { messages: input.messages.length })
-    const target = summarizationTarget(this.config, agent)
+    const target = summarizationTarget(agent)
     const assembler = new BlockAssembler()
     const options = {
       provider: target.provider,
@@ -97,21 +70,11 @@ export class RcaCompactionEngine extends BasicCompactionEngine {
   }
 }
 
-/** The route that writes the checkpoint: configured pair, else the conversation's own. */
-function summarizationTarget(config, agent) {
-  if (config.summarizationProvider && config.summarizationModel) {
-    return { provider: config.summarizationProvider, model: config.summarizationModel }
-  }
+/** The checkpoint is written on the conversation's own route. */
+function summarizationTarget(agent) {
   const routed = agent.session.requestHeader()?.config
-  if (routed !== undefined) return routed
-  const options = agent.options
-  if (options.provider && options.model) {
-    return { provider: options.provider, model: options.model }
-  }
-  throw new Error(
-    'no provider/model available for the RCA checkpoint: route one request or set the '
-    + 'summarization provider/model on the rca-compaction row',
-  )
+  if (routed === undefined) throw new Error('no routed request to write the RCA checkpoint on')
+  return routed
 }
 
 export default RcaCompactionEngine

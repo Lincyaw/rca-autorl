@@ -55,7 +55,14 @@ def episode() -> list[dict[str, Any]]:
     SEQ = 0
     events = [
         ev("step/start", {"step": 1}, None),
-        ev("user/message", {"role": "user", "content": [{"type": "text", "text": "incident"}]}),
+        ev(
+            "user/message",
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "incident"}],
+                "source": {"kind": "user"},
+            },
+        ),
     ]
     events += [assistant(1, "a1"), *call(1, "c1", "sql", statement="SELECT 1")]
     events += [

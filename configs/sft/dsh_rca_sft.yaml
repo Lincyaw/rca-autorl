@@ -20,9 +20,8 @@ cluster:
     type: nfs
     nfs_record_root: .runs/dsh-rca-sft/name_resolve
 
-# Same corpus and expansion as the smoke config: one row per assistant
-# turn, 865 of them from the checked-in 45-session distillation (the five
-# sessions on held-out cases were dropped).
+# One row per assistant turn, 865 of them from the checked-in 45-session
+# distillation (the five sessions on held-out cases were dropped).
 #
 # batch_size must be a multiple of the FSDP data-parallel width — a batch
 # is split across ranks, so batch_size=1 on 8 ranks fails outright with
@@ -94,10 +93,9 @@ actor:
   backend: "fsdp:d8p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  # Qwen3-4B-Thinking-2507 — native <think> tag support, vocab/template
-  # matches the distill output's Qwen/GLM shape (assistant.content
-  # carries <think>...</think>; tool_calls list carries the terminal
-  # submit_events / submit_verdict call).
+  # Qwen3-4B-Thinking-2507 — native <think> tag support; the chat template
+  # renders the exported rows as they are (assistant.content carries
+  # <think>...</think>, tool_calls carries the terminal submit_result call).
   path: Qwen/Qwen3-4B-Thinking-2507
   init_from_scratch: false
   gradient_checkpointing: true

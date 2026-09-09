@@ -4,7 +4,6 @@ import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { nextPageHint, SQL_OFFSET_DESCRIPTION, SQL_STATEMENT_DESCRIPTION, SQL_TOOL, sqlDescription } from './prompts.js'
 
-export { SQL_TOOL }
 
 /**
  * One DuckDB connection per episode, created on the first query.
@@ -78,8 +77,8 @@ function renderTable(value) {
 }
 
 /**
- * Save the full result to a TSV file so it survives context compaction.
- * Returns the file name, which is what the model-facing tail cites.
+ * Save the page to a TSV file so it survives context compaction. Returns the
+ * file name, which is what the model-facing tail cites.
  *
  * The file goes under `resultRoot`, never under the snapshot. The snapshot is
  * the shared dataset directory a training run replays for every rollout of that
@@ -89,29 +88,23 @@ function renderTable(value) {
  * calling agent so concurrent sessions in one runtime keep separate counters
  * and separate directories.
  */
-function saveResultFile(state, exec, value, statement) {
-  const key = state.key(exec)
-  if (!state.resultDirs) state.resultDirs = new Map()
-  if (!state.resultCounters) state.resultCounters = new Map()
-
-  let dir = state.resultDirs.get(key)
-  if (!dir) {
-    dir = join(state.resultRoot, key)
-    mkdirSync(dir, { recursive: true })
-    state.resultDirs.set(key, dir)
-  }
-
-  const n = (state.resultCounters.get(key) ?? 0) + 1
-  state.resultCounters.set(key, n)
+function saveResultFile(counters, resultRoot, key, value, statement) {
+  const dir = join(resultRoot, key)
+  mkdirSync(dir, { recursive: true })
+  const n = (counters.get(key) ?? 0) + 1
+  counters.set(key, n)
   const filename = `q${n}.tsv`
-  const filepath = join(dir, filename)
-
   const header = value.columns.join('\t')
   const rows = value.rows.map(row => row.join('\t'))
   const meta = `-- Statement: ${statement}\n-- ${value.matched_rows} rows matched, offset ${value.offset}\n`
-  writeFileSync(filepath, meta + header + '\n' + rows.join('\n') + '\n', 'utf-8')
+  writeFileSync(join(dir, filename), meta + header + '\n' + rows.join('\n') + '\n', 'utf-8')
+  return filename
+}
 
-  return { filename, filepath, queryNum: n }
+/** How many rows a statement matches, when the page did not reach its end. */
+async function countRows(connection, statement) {
+  const reader = await connection.runAndReadAll(`SELECT count(*) FROM (\n${statement.replace(/;\s*$/, '')}\n)`)
+  return Number(reader.getRows()[0][0])
 }
 
 /**
@@ -119,12 +112,13 @@ function saveResultFile(state, exec, value, statement) {
  * discovery is `SHOW TABLES` and `DESCRIBE <table>`, so no second tool is
  * needed, and nothing outside the snapshot is reachable through it.
  *
- * Each result is also saved to a file so that when `take_note` compacts older
- * sql results out of context, the model can still reference what it queried.
+ * Each page is also saved to a file, so that once the pruner has folded the
+ * result away the model can still cite what it queried.
  */
 export function registerSqlTool(ctx, state, limits) {
   const { maxRows, maxChars, maxCellChars } = limits
-  if (!state.pendingResults) state.pendingResults = []
+  let session
+  const counters = new Map()
 
   ctx.tools.register(defineTool({
     name: SQL_TOOL,
@@ -160,19 +154,17 @@ export function registerSqlTool(ctx, state, limits) {
       const offset = args.offset ?? 0
       if (offset < 0) throw new Error('`offset` must not be negative')
 
-      let session = state.snapshots.get(state.snapshot)
-      if (session === undefined) {
-        session = await openSnapshot(state.snapshot)
-        state.snapshots.set(state.snapshot, session)
-      }
+      session ??= await openSnapshot(state.snapshot)
 
-      const reader = await session.connection.runAndReadAll(statement)
+      // Only the page is pulled into the process; a broad query over a large
+      // table would otherwise materialize every row to show a fraction of them.
+      const reader = await session.connection.runAndReadUntil(statement, offset + maxRows)
       const columns = reader.columnNames()
-      const matched = reader.getRows()
+      const matchedRows = reader.done ? reader.currentRowCount : await countRows(session.connection, statement)
 
       const rows = []
       let chars = columns.join('\t').length
-      for (const row of matched.slice(offset)) {
+      for (const row of reader.getRows().slice(offset)) {
         if (rows.length >= maxRows) break
         const projected = row.map(value => cell(jsonValue(value), maxCellChars))
         const width = projected.reduce((total, text) => total + text.length + 1, 0)
@@ -185,22 +177,12 @@ export function registerSqlTool(ctx, state, limits) {
         columns,
         rows,
         offset,
-        matched_rows: matched.length,
-        truncated: offset + rows.length < matched.length,
+        matched_rows: matchedRows,
+        truncated: offset + rows.length < matchedRows,
       }
-
-      // Save to file and track for compaction by take_note.
-      if (matched.length > 0) {
-        const { filename } = saveResultFile(state, exec, result, statement)
-        result.result_file = filename
-        state.pendingResults.push({
-          statement,
-          filename,
-          matched_rows: matched.length,
-          columns: columns.length,
-        })
+      if (matchedRows > 0) {
+        result.result_file = saveResultFile(counters, state.resultRoot, state.key(exec), result, statement)
       }
-
       return result
     },
   }))

@@ -17,14 +17,11 @@ holds the persona, and this test reads both.
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
-import subprocess
 import unittest
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from node import REPO_ROOT, run_node_module
+
 PROMPTS_JS = REPO_ROOT / "agent" / "rca-harness" / "src" / "prompts.js"
 SCENARIO_DIR = REPO_ROOT / "agent" / "profiles"
 
@@ -79,20 +76,7 @@ process.stdout.write(JSON.stringify(out))
 
 
 def model_visible_strings() -> dict[str, str]:
-    node = shutil.which("node")
-    if node is None:
-        raise unittest.SkipTest("node is not on PATH")
-    completed = subprocess.run(
-        [node, "--input-type=module", "-e", HARNESS % json.dumps(str(PROMPTS_JS))],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=REPO_ROOT,
-        env={**os.environ},
-    )
-    if completed.returncode != 0:
-        raise AssertionError(completed.stderr)
-    texts: dict[str, str] = json.loads(completed.stdout)
+    texts: dict[str, str] = run_node_module(HARNESS % json.dumps(str(PROMPTS_JS)))
     for patch in sorted(SCENARIO_DIR.glob("*.patch.yml")):
         texts[patch.name] = patch.read_text(encoding="utf-8")
     return texts

@@ -7,36 +7,27 @@ import json
 import os
 import random
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean, pstdev
-from typing import Any, Unpack
+from typing import Any
 
+from areal.infra import workflow_context
 from areal.utils import logging
 from deepseek_harness import RunResult
 
 from autorl.difficulty import AXES, Answer, element_weights, weighted_score
 from autorl.fork import fork_prefix, steps
-from autorl.fpg import parse_submission
 from autorl.harness import model_route, require_bundle, run_episode, scenario_patch
-from autorl.interfaces import (
-    AReaLAgentWorkflow,
-    AReaLRunOptions,
-    DshWorkflowConfig,
-    JsonValue,
-    RCASample,
-)
-from autorl.reward import (
-    accepted_call_ids,
-    episode_reward,
-    read_completions,
-    step_completions,
-    truth_for_case,
-)
+from autorl.reward import answer_of, step_ids, submitted_result, truth_for_case
 
 logger = logging.getLogger("Dsh-RCA")
 
-SUBMIT_TOOL = "submit_result"
+# An episode holds a thread for as long as the harness runs, up to `timeout`.
+# asyncio's default pool stops at a few dozen, which would queue episodes
+# silently once a batch and its forks run concurrently.
+EPISODES = ThreadPoolExecutor(max_workers=256, thread_name_prefix="rca-episode")
 
 
 @dataclass
@@ -44,7 +35,7 @@ class Sibling:
     """One response sampled at a fork point, and the continuations run from it."""
 
     first: str | None  # the completion that is the response itself
-    answers: list[Answer]  # one per continuation, the last of which is the response's own
+    answers: list[Answer]  # one per continuation, the first of which is the response's own
 
 
 @dataclass
@@ -52,26 +43,21 @@ class Sample:
     """What `rescore_group` needs from one rollout after it has run."""
 
     answer: Answer
-    child_ids: set[str] = field(default_factory=set)  # every completion a fork produced
+    own: set[str] = field(default_factory=set)  # the completions behind the trajectory's steps
     forked_at: str | None = None  # the parent's own completion at the fork step
     siblings: list[Sibling] = field(default_factory=list)
 
 
-class DshWorkflow(AReaLAgentWorkflow):
-    """Run one RCA case with DeepSeek Harness and return its per-completion rewards."""
+class DshWorkflow:
+    """Run one RCA case with DeepSeek Harness and return its outcome."""
 
-    def __init__(self, econfig: DshWorkflowConfig | None = None) -> None:
+    def __init__(self, econfig: dict[str, Any] | None = None) -> None:
         config = econfig or {}
         self.scenario = str(config.get("scenario") or "rca")
         self.model = str(config.get("model") or "default")
         self.max_tokens = int(config.get("max_tokens") or 8192)
         self.context_window = int(config.get("context_window") or 0)
         self.timeout = float(config.get("timeout") or 1800.0)
-        # The same number `apply_reward_discount` uses. The rewards this
-        # workflow returns are differences between turn values, and the
-        # differencing only inverts the accumulation if both sides agree —
-        # so it is read from the config rather than assumed here.
-        self.turn_discount = float(str(config.get("turn_discount") or 1.0))
         self.difficulty = bool(config.get("difficulty", True))
         self.centring = str(config.get("centring") or "rloo")
         if self.centring not in CENTRINGS:
@@ -89,88 +75,61 @@ class DshWorkflow(AReaLAgentWorkflow):
             .expanduser()
             .resolve()
         )
-        # One workflow instance serves every sample of a group, which is what
-        # lets `rescore_group` see them together.
-        self._samples: dict[int, Sample] = {}
+        # One instance serves a whole batch, so the groups in flight are told
+        # apart by the task id AReaL sets, and their samples by index.
+        self._groups: dict[int | None, dict[int, Sample]] = {}
         scenario_patch(self.scenario)  # fail at construction, not mid-rollout
         require_bundle(self.dsh_home)
 
-    async def run(
-        self,
-        data: RCASample,
-        **extra_kwargs: Unpack[AReaLRunOptions],
-    ) -> dict[str, float]:
+    async def run(self, data: dict[str, Any], **extra_kwargs: Any) -> float:
         base_url = extra_kwargs.get("base_url")
         if not base_url:
             raise ValueError("AReaL did not provide a rollout proxy base_url")
         api_key = str(extra_kwargs.get("api_key") or "EMPTY")
 
-        incident = _required_text(data, ("incident", "question", "prompt"))
+        incident = str(data.get("question") or "").strip()
+        if not incident:
+            raise ValueError("RCA sample has no question")
         data_dir = resolve_data_dir(data, self.dataset_root)
         session_id = f"rca-{uuid.uuid4().hex}"
-        sample = _sample_index()
+        context = workflow_context.get()
+        sample = int(context.sample_idx or 0)
         temperature = 0.0 if sample == self.greedy else self.temperature
-        result = await asyncio.to_thread(
-            self._run_episode, incident, data_dir, str(base_url), api_key, session_id, temperature
+        result = await self._episode(
+            incident, data_dir, str(base_url), api_key, session_id, temperature
         )
-        # A row whose id is 0 is a row, so this is not an `or` chain.
-        case_id = next(
-            (data[key] for key in ("id", "source", "datapack_name") if data.get(key) is not None),
-            None,
-        )
-        submission = submitted_result(result)
+        submission = submitted_result(result.events)
         truth = truth_for_case(Path(data_dir))
         answer = answer_of(submission, truth)
         # The flat graph score. `rescore_group` replaces it with the advantage
         # once the siblings are in.
         outcome = weighted_score(answer, {})
-        completions = read_completions(self.dsh_home, session_id)
-        episode = episode_reward(
-            events=result.events,
-            completions=completions,
-            outcome=outcome,
-            turn_discount=self.turn_discount,
-        )
         logger.info(
-            f"Finished RCA episode: case={case_id} finish_reason={result.finish_reason} "
-            f"submitted={submission is not None} outcome={outcome:.3f} "
-            f"rewarded={len(episode.shaped)} unmapped={episode.unmapped}"
+            f"Finished RCA episode: case={data.get('id')} finish_reason={result.finish_reason} "
+            f"submitted={submission is not None} outcome={outcome:.3f}"
         )
-        record = Sample(answer)
-        rewards = dict(episode.shaped)
+        record = Sample(answer, set(step_ids(result.events).values()))
         if self._forks(sample, data):
             await self._fork(
-                record,
-                result,
-                completions,
-                incident,
-                data_dir,
-                str(base_url),
-                api_key,
-                session_id,
-                truth,
+                record, result, incident, data_dir, str(base_url), api_key, session_id, truth
             )
-            # The children's rows are placed here and valued in
-            # `rescore_group`; zero keeps the parent's accumulation intact.
-            rewards.update(dict.fromkeys(record.child_ids, 0.0))
-        # Keyed by sample index, which AReaL sets before the episode runs.
-        self._samples[sample] = record
-        # A dict addresses turns by the completion the proxy cached; a float
-        # would land the whole episode on its last one.
-        return rewards
+        self._groups.setdefault(context.task_id, {})[sample] = record
+        # The proxy lands this on the session's last completion and carries it
+        # back over the others; the values that train are written below.
+        return outcome
 
     async def rescore_group(self, results: list[Any]) -> list[Any] | None:
         """Turn a prompt's scores into advantages, sample against sample.
 
         The group is visible nowhere else, so this is where §3 happens: the
         sibling difficulty weighting, the centring, and the fork advantages.
-        The rows arrive already accumulated backward, so what is written here
-        is each row's final value: every row of a trajectory carries its
-        advantage, a fork sibling's own response carries the fork advantage,
-        and everything a fork produced beyond that carries nothing.
+        The rows arrive already accumulated, so what is written here is each
+        row's final value: every step of a trajectory carries its advantage, a
+        fork sibling's own response carries the fork advantage, and every other
+        row the session produced — a continuation, a compaction summary —
+        carries nothing.
         """
-        samples = self._samples
-        self._samples = {}
+        samples = self._groups.pop(workflow_context.get().task_id, {})
         if len(samples) != len(results) or any(r is None for r in results):
             # A sample was rejected, or ran without recording. Weights read off
             # an incomplete group would call its missing parts hard.
@@ -184,9 +143,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         advantages = centre(scores, self.centring)
         for result, record, advantage in zip(results, ordered, advantages, strict=True):
             for completion_id in result:
-                result[completion_id].reward = (
-                    0.0 if completion_id in record.child_ids else advantage
-                )
+                result[completion_id].reward = advantage if completion_id in record.own else 0.0
             if not record.siblings:
                 continue
             values = [
@@ -203,7 +160,7 @@ class DshWorkflow(AReaLAgentWorkflow):
                 result[record.forked_at].reward = 0.0
         return results
 
-    def _forks(self, sample: int, data: RCASample) -> bool:
+    def _forks(self, sample: int, data: dict[str, Any]) -> bool:
         """Whether this sample is the one its group forks (spec §4, §6 budget).
 
         One sample of every `fork_every`-th case, by the case's own manifest
@@ -218,7 +175,6 @@ class DshWorkflow(AReaLAgentWorkflow):
         self,
         record: Sample,
         parent: RunResult,
-        completions: list[dict[str, Any]],
         incident: str,
         data_dir: str,
         base_url: str,
@@ -238,31 +194,21 @@ class DshWorkflow(AReaLAgentWorkflow):
             return
         step = random.Random(session_id).choice(candidates[1:])
         prefix = fork_prefix(parent.events, step)
-        record.forked_at = step_completions(parent.events, completions).get(step)
+        record.forked_at = step_ids(parent.events).get(step)
 
         async def run_children(
             prefix: dict[str, Any], name: str, count: int
-        ) -> list[tuple[RunResult, list[str], Answer]]:
+        ) -> list[tuple[RunResult, Answer]]:
             """`count` episodes from one restored state, side by side."""
             path = self.dsh_home / "rca-forks" / f"{name}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(prefix), encoding="utf-8")
 
-            async def one(index: int) -> tuple[RunResult, list[str], Answer]:
-                child_id = f"{name}c{index}"
-                result = await asyncio.to_thread(
-                    self._run_episode,
-                    incident,
-                    data_dir,
-                    base_url,
-                    api_key,
-                    child_id,
-                    self.temperature,
-                    str(path),
+            async def one(index: int) -> tuple[RunResult, Answer]:
+                result = await self._episode(
+                    incident, data_dir, base_url, api_key, f"{name}c{index}", self.temperature, path
                 )
-                rows = read_completions(self.dsh_home, child_id)
-                ids = [str(c["responseId"]) for c in rows if c.get("responseId")]
-                return result, ids, answer_of(submitted_result(result), truth)
+                return result, answer_of(submitted_result(result.events), truth)
 
             try:
                 return list(await asyncio.gather(*(one(i) for i in range(count))))
@@ -270,27 +216,37 @@ class DshWorkflow(AReaLAgentWorkflow):
                 path.unlink(missing_ok=True)
 
         siblings = await run_children(prefix, f"{session_id}-s{step}", self.fork_siblings)
-        for index, (child, ids, answer) in enumerate(siblings):
-            answers = [answer]
-            record.child_ids.update(ids)
-            # The response is the child's first step; later continuations
-            # branch from its second, when it has one.
-            if self.fork_continuations > 1 and len(steps(child.events)) > 1:
-                more = await run_children(
-                    fork_prefix(child.events, 2, base=prefix),
-                    f"{session_id}-s{step}c{index}m",
-                    self.fork_continuations - 1,
-                )
-                for _, grandchild_ids, grandchild_answer in more:
-                    record.child_ids.update(grandchild_ids)
-                    answers.append(grandchild_answer)
-            record.siblings.append(Sibling(ids[0] if ids else None, answers))
-        logger.info(
-            f"Forked {session_id} at step {step}: {len(record.siblings)} siblings, "
-            f"{len(record.child_ids)} completions"
+        # The response is the child's first step; later continuations branch
+        # from its second, when it has one. Every sibling's continuations run
+        # at once.
+        branching = [
+            index
+            for index, (child, _) in enumerate(siblings)
+            if self.fork_continuations > 1 and len(steps(child.events)) > 1
+        ]
+        more = dict(
+            zip(
+                branching,
+                await asyncio.gather(
+                    *(
+                        run_children(
+                            fork_prefix(siblings[index][0].events, 2, base=prefix),
+                            f"{session_id}-s{step}c{index}m",
+                            self.fork_continuations - 1,
+                        )
+                        for index in branching
+                    )
+                ),
+                strict=True,
+            )
         )
+        for index, (child, answer) in enumerate(siblings):
+            first = next(iter(step_ids(child.events).values()), None)
+            answers = [answer, *(a for _, a in more.get(index, []))]
+            record.siblings.append(Sibling(first, answers))
+        logger.info(f"Forked {session_id} at step {step}: {len(record.siblings)} siblings")
 
-    def _run_episode(
+    async def _episode(
         self,
         incident: str,
         data_dir: str,
@@ -298,7 +254,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         api_key: str,
         session_id: str,
         temperature: float | None,
-        fork: str | None = None,
+        fork: Path | None = None,
     ) -> RunResult:
         # AReaL's proxy is reached as a declared route, the same way the SFT
         # collector reaches a teacher endpoint; `model_route` says why a
@@ -312,16 +268,19 @@ class DshWorkflow(AReaLAgentWorkflow):
             api_key=api_key,
             context_window=self.context_window,
             temperature=temperature,
-            fork=fork,
+            fork=None if fork is None else str(fork),
         )
-        return run_episode(
-            dsh_home=self.dsh_home,
-            route=route,
-            cwd=data_dir,
-            prompt=incident,
-            session_id=session_id,
-            max_tokens=self.max_tokens,
-            timeout=self.timeout,
+        return await asyncio.get_running_loop().run_in_executor(
+            EPISODES,
+            lambda: run_episode(
+                dsh_home=self.dsh_home,
+                route=route,
+                cwd=data_dir,
+                prompt=incident,
+                session_id=session_id,
+                max_tokens=self.max_tokens,
+                timeout=self.timeout,
+            ),
         )
 
 
@@ -346,13 +305,11 @@ def centre(scores: list[float], method: str) -> list[float]:
     return [score - mean(scores[:i] + scores[i + 1 :]) for i, score in enumerate(scores)]
 
 
-def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:
-    for key in ("data_dir", "case_dir", "observability_dir"):
-        value = sample.get(key)
-        if value and str(value).strip():
-            return str(Path(str(value)).expanduser())
-
-    datapack = sample.get("datapack_name") or sample.get("data_pack_name")
+def resolve_data_dir(sample: dict[str, Any], dataset_root: str = "") -> str:
+    """The snapshot directory: `data_dir` as given, or the case under the corpus root."""
+    if sample.get("data_dir"):
+        return str(Path(str(sample["data_dir"])).expanduser())
+    datapack = sample.get("datapack_name")
     if datapack and dataset_root:
         root = Path(dataset_root).expanduser()
         # `datapacks/ops-lite` keeps its snapshots one level down, beside the
@@ -367,84 +324,4 @@ def resolve_data_dir(sample: RCASample, dataset_root: str = "") -> str:
     )
 
 
-def submitted_result(result: RunResult) -> dict[str, JsonValue] | None:
-    """The arguments of the episode's accepted `submit_result` call, or None.
-
-    Only a call the tool actually executed counts. `submit_result` is terminal —
-    `execute` ends the turn and arms a monotonic guard — but argument-schema
-    validation runs *before* `execute`, so a call the registry rejects neither
-    ends the turn nor arms the guard, and the model retries inside the same
-    turn. A `tool/call` event is written before execution either way, so the log
-    can hold several, and the rejected one comes first.
-
-    Reading that first call is not a near miss: a submission rejected for
-    missing `edges` and `root_causes` is exactly the shape a verifier scores
-    zero, which would punish an episode for recovering rather than for failing.
-    On the first ten collected episodes three took that path. Hence the pairing
-    by call id against the result the tool returned.
-    """
-    accepted = accepted_call_ids(result.events)
-    for event in result.events:
-        if event.get("type") != "tool/call":
-            continue
-        data = event.get("data")
-        if not isinstance(data, dict) or data.get("name") != SUBMIT_TOOL:
-            continue
-        if data.get("callId") not in accepted:
-            continue
-        arguments = data.get("arguments")
-        if not isinstance(arguments, str):
-            continue
-        parsed = json.loads(arguments)
-        if isinstance(parsed, dict):
-            return parsed
-    return None
-
-
-def _required_text(sample: RCASample, keys: tuple[str, ...]) -> str:
-    for key in keys:
-        value = sample.get(key)
-        if value and str(value).strip():
-            return str(value).strip()
-    raise ValueError(f"RCA sample needs one of: {', '.join(keys)}")
-
-
-__all__ = ["DshWorkflow", "accepted_call_ids", "resolve_data_dir", "submitted_result"]
-
-
-def _sample_index() -> int:
-    """Which sample of its group this episode is; 0 when nothing says."""
-    try:
-        from areal.infra import workflow_context
-
-        return int(getattr(workflow_context.get(), "sample_idx", 0) or 0)
-    except Exception:
-        return 0
-
-
-def answer_of(submission: dict[str, JsonValue] | None, truth: Any) -> Answer:
-    """One sample's claimed and correct elements, as the sets difficulty reads.
-
-    Three axes, all on subjects: the root causes, every node, and every edge as
-    an ordered subject pair. Predicates are left out, the way `fpg`'s own
-    scalar leaves them out.
-    """
-    truths = _elements(
-        truth.graph.nodes, truth.graph.edges, [n.id for n in truth.graph.root_causes]
-    )
-    if submission is None:
-        claimed = {axis: frozenset[str]() for axis in truths}
-    else:
-        answer = parse_submission(submission)
-        claimed = _elements(answer.nodes, answer.edges, answer.root_causes)
-    found = {axis: claimed[axis] & truths[axis] for axis in truths}
-    return Answer(found=found, truth=truths, claimed=claimed)
-
-
-def _elements(nodes: Any, edges: Any, root_ids: Any) -> dict[str, frozenset[str]]:
-    subject = {node.id: str(node.subject) for node in nodes}
-    return {
-        "roots": frozenset(subject[i] for i in root_ids if i in subject),
-        "subjects": frozenset(subject.values()),
-        "edges": frozenset(f"{subject[e.src]}->{subject[e.dst]}" for e in edges),
-    }
+__all__ = ["DshWorkflow", "Sample", "Sibling", "centre", "resolve_data_dir"]

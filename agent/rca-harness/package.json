@@ -10,8 +10,7 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json",
     "./compaction": "./src/compaction.js",
-    "./pruner": "./src/pruner.js",
-    "./completions": "./src/completions.js"
+    "./pruner": "./src/pruner.js"
   },
   "files": [
     "src",
@@ -27,6 +26,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*",
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/dsh-compaction-basic": "*",
     "@deepseek-ai/dsh-llm": "*",

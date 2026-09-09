@@ -88,7 +88,7 @@ class WorkflowHookTest(unittest.TestCase):
         from autorl.agent import DshWorkflow
 
         self.workflow = DshWorkflow.__new__(DshWorkflow)
-        self.workflow._samples = {}
+        self.workflow._groups = {}
         self.workflow.difficulty = True
         self.workflow.centring = "rloo"
 
@@ -100,10 +100,15 @@ class WorkflowHookTest(unittest.TestCase):
         """A sample's rows as they arrive: every row already carries its value."""
         return {f"{prefix}{i}": self.interaction(value) for i in range(turns)}
 
-    def samples(self, *answers) -> None:
+    def sample(self, answer: Answer, turns: int, prefix: str = "c") -> object:
+        """The record `run` keeps: the answer and the ids of its own steps."""
         from autorl.agent import Sample
 
-        self.workflow._samples = {i: Sample(a) for i, a in enumerate(answers)}
+        return Sample(answer, {f"{prefix}{i}" for i in range(turns)})
+
+    def samples(self, *answers) -> None:
+        # Records are keyed by the group's task id; the test runs outside one.
+        self.workflow._groups = {None: {i: self.sample(a, 3) for i, a in enumerate(answers)}}
 
     def run_hook(self, results: list[object]) -> object:
         import asyncio
@@ -148,16 +153,13 @@ class WorkflowHookTest(unittest.TestCase):
 
     def test_fork_rows_carry_the_fork_advantage_and_nothing_else(self) -> None:
         """Spec §4: the siblings replace the parent's turn; continuations are not trained."""
-        from autorl.agent import Sample, Sibling
+        from autorl.agent import Sibling
 
         told, hard = answer({"svc:told"}), answer({"svc:told", "svc:hard"})
-        parent = Sample(
-            told,
-            child_ids={"b0", "b0m", "b1", "b1m"},
-            forked_at="c1",
-            siblings=[Sibling("b0", [hard, hard]), Sibling("b1", [told, told])],
-        )
-        self.workflow._samples = {0: parent, 1: Sample(told)}
+        parent = self.sample(told, 3)
+        parent.forked_at = "c1"
+        parent.siblings = [Sibling("b0", [hard, hard]), Sibling("b1", [told, told])]
+        self.workflow._groups = {None: {0: parent, 1: self.sample(told, 2)}}
         first = self.result(3, 0.2)
         first.update({key: self.interaction(0.0) for key in ("b0", "b0m", "b1", "b1m")})
         results = [first, self.result(2, 0.2)]
@@ -169,6 +171,15 @@ class WorkflowHookTest(unittest.TestCase):
         self.assertEqual(first["b1m"].reward, 0.0)
         # The parent's own turns still carry its trajectory advantage.
         self.assertEqual(first["c0"].reward, first["c2"].reward)
+
+    def test_a_row_no_step_produced_carries_nothing(self) -> None:
+        """The proxy caches the compaction summarizer's call too; it is not trained on."""
+        self.samples(answer({"svc:told", "svc:hard"}), answer({"svc:told"}))
+        results = [self.result(3, 0.5), self.result(3, 0.3)]
+        results[0]["summary"] = self.interaction(0.5)
+        self.run_hook(results)
+        self.assertEqual(results[0]["summary"].reward, 0.0)
+        self.assertGreater(results[0]["c0"].reward, 0.0)
 
     def test_an_incomplete_group_is_left_alone(self) -> None:
         """Weights read off a partial group would call its missing parts hard."""

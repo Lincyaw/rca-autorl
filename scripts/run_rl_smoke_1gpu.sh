@@ -1,23 +1,15 @@
 #!/usr/bin/env bash
 # One RL step end to end on a single consumer GPU. Verified on an RTX 5090
-# (SM120) with Qwen3-0.6B: rollout through the harness, logp, PPO update, and
-# the weight push back to sglang. Reward is still the placeholder 0.0, so the
-# advantage is exactly zero and nothing is learned -- this checks plumbing,
-# not learning.
+# (SM120) with Qwen3-0.6B: rollout through the harness, reward, PPO update,
+# and the weight push back to sglang. With two samples per prompt the group
+# is usually tied, so this checks plumbing, not learning.
 #
 # Every override below exists because the repo default does not hold on one
 # consumer GPU; on a multi-GPU datacenter node run scripts/run_smoke.sh instead.
 set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-cd "$ROOT_DIR"
-export PATH="$ROOT_DIR/.venv/bin:$PATH"
-
-DSH_HOME=${DSH_HOME:-$ROOT_DIR/.runs/dsh-live-smoke/dsh-home}
-# Always reinstall: `pnpm add` on an unchanged `file:` spec is a no-op however
-# much the bundle changed, so "already installed" says nothing about what is.
-# A run once spent 234 episodes on a bundle hours old while every check passed.
-python3 -m autorl.harness "$DSH_HOME" --reinstall
+export DSH_HOME=${DSH_HOME:-$ROOT_DIR/.runs/dsh-live-smoke/dsh-home}
 
 # sglang JIT-compiles kernels with nvcc, and CUDA < 12.8 cannot target SM120.
 # Point CUDA_HOME at a toolkit new enough for the GPU when the system one is older.
@@ -29,13 +21,13 @@ export LD_LIBRARY_PATH="$(ls -d "$ROOT_DIR"/.venv/lib/python3.12/site-packages/n
 # sglang and FSDP share one device; without this they fragment each other out of memory.
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 
-python3 -m autorl.train --config configs/train/dsh_rca_smoke.yaml \
+exec "$ROOT_DIR/scripts/run_smoke.sh" \
   total_train_steps=1 \
   cluster.fileroot=.runs/dsh-live-smoke \
   cluster.name_resolve.nfs_record_root=.runs/dsh-live-smoke/name_resolve \
   econfig.dsh_home="$DSH_HOME" \
   actor.path=Qwen/Qwen3-0.6B \
-  gconfig.n_samples=2 actor.reward_norm.group_size=2 \
+  gconfig.n_samples=2 \
   gconfig.max_new_tokens=1024 \
   sglang.context_length=8192 \
   `# A microbatch must hold the longest packed sequence, and the logits for one` \

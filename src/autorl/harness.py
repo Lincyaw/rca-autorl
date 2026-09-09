@@ -150,7 +150,7 @@ def require_bundle(dsh_home: Path) -> None:
 
 
 def install_bundle(dsh_home: Path, *, reinstall: bool = False) -> bool:
-    """Materialize the profile and add the bundle. Returns False when already installed.
+    """Add the bundle to the profile. Returns False when already installed.
 
     `file:` rather than `link:`: pnpm copies the bundle into the profile package
     tree, which is where its `@deepseek-ai/dsh-tools` peer import resolves
@@ -159,7 +159,7 @@ def install_bundle(dsh_home: Path, *, reinstall: bool = False) -> bool:
     session only after `reinstall`.
     """
     dsh_home.mkdir(parents=True, exist_ok=True)
-    _run_dsh(dsh_home, ["--profile", PROFILE, "--dump-default-config"])
+    # `dsh plugin` initializes a missing profile itself before calling pnpm.
     installed = BUNDLE_NAME in _profile_dependencies(dsh_home)
     if installed:
         if not reinstall:

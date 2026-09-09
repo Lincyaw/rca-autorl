@@ -18,7 +18,6 @@ agent/
     src/vocabulary.js  GENERATED from configs/fpg/microservices.toml
     src/compaction.js  compaction-basic with the RCA checkpoint template
     src/pruner.js      note-aware tool-result pruner
-    src/completions.js records the provider response id per LLM request
     src/sampling.js    the trainer's temperature, and the route a forked episode continues on
     src/prompts.js     every model-facing string
     src/debug.js       env-gated trace
@@ -104,8 +103,8 @@ call with its `tool/result` by id and reads the accepted one.
 ## Context management
 
 `sdk-minimal` mounts none. The bundle patch adds `token-meter`, a
-`compaction-basic` subclass, a tool-result pruner, and the completions
-recorder, as an explicit allowlist.
+`compaction-basic` subclass, and a tool-result pruner, as an explicit
+allowlist.
 
 `compaction-basic` compacts at `thresholdRatio` of the model's context window,
 which the adapter reads from `$DSH_CONTEXT_WINDOW`; `DshWorkflow` sets that
@@ -124,11 +123,10 @@ hypothesis to a finding across a checkpoint. `maxTokens` and `thresholdRatio`
 are sized in `cordis.patch.yml` against the serving window, with the
 arithmetic inline.
 
-`completions.js` writes one line per LLM request to
-`$DSH_HOME/rca-completions/<session>.jsonl` with the provider's response id,
-read off `finish.replayState`. AReaL keys its reward cache by that id and the
-session log does not carry it; `purpose` separates the agent's turns from the
-compaction summarizer's.
+AReaL keys its reward cache by the provider's response id. On the
+`llm-pi-ai` route that id rides in the message's replay state, which the loop
+logs with every `assistant/message`, so `autorl.reward.step_ids` reads it
+straight off the session log.
 
 ## Sampling temperature
 
@@ -147,14 +145,14 @@ The harness has no session resume, so a fork (spec §4) rebuilds the state
 instead. `autorl.fork.fork_prefix` folds the parent's session log up to the
 fork step the way the harness folds it, compaction included, and writes the
 messages the model saw, the notes it took, and how many results its last note
-had not covered. The path arrives as `RCA_FORK_PREFIX`. The history is the
-one thing no waterfall may change, so `sampling.js` switches a forked episode
-to the `rca-fork` route, whose adapter prepares the call on the launch's own
-route and streams it with the parent's messages spliced in after the child's
-incident prompt; `index.js` seeds the notebook, and the ledger starts at the
-parent's debt. DuckDB is rebuilt from the snapshot as always. That inner call
-streams through `llm/stream` a second time, so `completions.js` writes a
-response id once.
+had not covered. The path arrives as `RCA_FORK_PREFIX`. The `agent/request`
+waterfall may not touch messages, but `llm/stream` may answer the loop's
+request itself, so `sampling.js` answers it with a second call on the same
+route, the parent's messages spliced in after the child's incident prompt;
+`index.js` seeds the notebook, and the ledger starts at the parent's debt.
+DuckDB is rebuilt from the snapshot as always. The runtime's own listeners see
+both calls; only the loop's request carries the loop marker, so the rewrite
+happens once.
 
 The child's own session log holds only what the child did, which is what the
 reward mapping reads. Two things the child does not inherit: the parent's

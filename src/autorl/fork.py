@@ -8,19 +8,18 @@ state is what the bundle keeps in memory: the notebook, and how many results
 the last note has not covered. The snapshot itself is deterministic.
 
 The prefix is written to a file the harness reads through `RCA_FORK_PREFIX`:
-`agent/rca-harness/src/sampling.js` splices the messages after the child's own
-incident prompt on every request, and `index.js` seeds the notebook and the
-ledger from it.
+`agent/rca-harness/src/sampling.js` splices the messages in after the child's
+own incident prompt on every request, and `index.js` seeds the notebook and
+the ledger from it.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from typing import Any
 
-from autorl.data.export import fold_surface
-from autorl.reward import accepted_call_ids
+from autorl.data.export import fold_surface, is_incident
+from autorl.reward import accepted_calls
 
 SURFACE = {"assistant/message", "tool/result", "user/message"}
 
@@ -44,27 +43,21 @@ def fork_prefix(
     if cut is None:
         raise ValueError(f"no step {step} in the parent episode")
     before = list(events[:cut])
+    # The incident prompt is left out: the child receives its own. After a
+    # compaction it is already gone from the surface.
     messages = [
         e["data"]["message"] if e["type"] != "user/message" else e["data"]
         for e in fold_surface(before)
-        if e.get("type") in SURFACE
+        if e.get("type") in SURFACE and not (e["type"] == "user/message" and is_incident(e))
     ]
-    # The first user message is the incident prompt; the child receives its own.
-    prompt = next((i for i, m in enumerate(messages) if m.get("role") == "user"), None)
-    if prompt is None:
-        raise ValueError("the parent episode has no incident prompt before the fork")
-    del messages[prompt]
 
-    accepted = accepted_call_ids(before)
     notes: list[str] = list(base["notes"]) if base else []
     unnoted = int(base["unnoted"]) if base else 0
-    for e in before:
-        if e.get("type") != "tool/call" or e["data"].get("callId") not in accepted:
-            continue
-        if e["data"]["name"] == "take_note":
-            notes.append(str(json.loads(e["data"]["arguments"]).get("content", "")).strip())
+    for name, arguments in accepted_calls(before):
+        if name == "take_note":
+            notes.append(str(arguments.get("content", "")).strip())
             unnoted = 0
-        elif e["data"]["name"] == "sql":
+        elif name == "sql":
             unnoted += 1
     if base is not None:
         messages = [*base["messages"], *messages]

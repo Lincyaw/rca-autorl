@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Launch the RCA SFT run: one full epoch over the distillation, 8 GPUs.
-#
-# The smoke script's config stops after one step on one card; this one
-# trains to convergence. Defaults:
+# `run_sft_smoke.sh` is this with the run cut to one step on one card. Defaults:
 #   - config: configs/sft/dsh_rca_sft.yaml
 #       (Qwen3-4B-Thinking-2507, max_length=32768, fsdp:d8p1t1)
 #   - train_dataset.path: data/sft/rca_sessions.jsonl, the checked-in

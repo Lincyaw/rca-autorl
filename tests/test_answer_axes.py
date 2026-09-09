@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from autorl.agent import answer_of
 from autorl.fpg import schema
+from autorl.reward import answer_of
 
 WINDOW = {"start": "2026-05-01T17:19:07+08:00", "end": "2026-05-01T17:24:07+08:00"}
 EVIDENCE = [

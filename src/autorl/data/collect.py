@@ -29,24 +29,15 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from pydantic import ValidationError
 
-from autorl.agent import resolve_data_dir, submitted_result
-from autorl.data.samples import load_manifest_samples
+from autorl.agent import resolve_data_dir
+from autorl.data.samples import read_jsonl
 from autorl.fpg import parse_submission
 from autorl.harness import ModelRoute, model_route, require_bundle, run_episode
-from autorl.interfaces import RCASample
-
-
-def _first(sample: dict[str, Any], keys: tuple[str, ...]) -> Any:
-    """The first key present with a value, treating 0 and "" as present."""
-    for key in keys:
-        value = sample.get(key)
-        if value is not None and value != "":
-            return value
-    return None
+from autorl.reward import submitted_result
 
 
 @dataclass
@@ -70,18 +61,16 @@ def collect_case(
     timeout: float,
     dataset_root: str,
 ) -> Episode:
-    # `or` would skip a row whose id is 0, and the corpus indexes from zero.
-    case_id = str(_first(sample, ("id", "source", "datapack_name")))
-    incident = str(sample.get("question") or sample.get("incident") or "").strip()
+    case_id = str(sample.get("id"))
+    incident = str(sample.get("question") or "").strip()
     if not incident:
-        raise ValueError(f"case {case_id} has no question/incident")
+        raise ValueError(f"case {case_id} has no question")
     session_id = f"case{case_id}-{uuid.uuid4().hex[:8]}"
     try:
         result = run_episode(
             dsh_home=dsh_home,
             route=route,
-            # A manifest row is untyped JSON until it is read as one.
-            cwd=resolve_data_dir(cast(RCASample, sample), dataset_root),
+            cwd=resolve_data_dir(sample, dataset_root),
             prompt=incident,
             session_id=session_id,
             max_tokens=max_tokens,
@@ -91,7 +80,7 @@ def collect_case(
         return Episode(
             case_id, session_id, "error", False, error=f"{type(error).__name__}: {error}"
         )
-    submission = submitted_result(result)
+    submission = submitted_result(result.events)
     episode = Episode(case_id, result.session_id, str(result.finish_reason), submission is not None)
     if submission is None:
         return episode
@@ -110,7 +99,7 @@ def collect_case(
 
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="python -m autorl.data.collect")
-    parser.add_argument("manifest", help="RCA manifest .jsonl/.json")
+    parser.add_argument("manifest", help="RCA manifest .jsonl")
     parser.add_argument("dsh_home", help="Harness home to write sessions into")
     parser.add_argument("--limit", type=int, default=0, help="first N cases (0 = all)")
     parser.add_argument("--offset", type=int, default=0)
@@ -135,7 +124,7 @@ def main(argv: list[str]) -> None:
 
     dsh_home = Path(args.dsh_home).expanduser().resolve()
     require_bundle(dsh_home)
-    samples = load_manifest_samples(args.manifest)[args.offset :]
+    samples = read_jsonl(args.manifest)[args.offset :]
     if args.limit:
         samples = samples[: args.limit]
     dataset_root = args.dataset_root or str(Path(args.manifest).expanduser().resolve().parent)

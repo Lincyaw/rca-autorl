@@ -3,7 +3,6 @@ import { PARAMETERS, validate } from './contract.js'
 import { alreadySubmitted, submitDescription, SUBMIT_TOOL } from './prompts.js'
 import { VOCAB_VERSION } from './vocabulary.js'
 
-export { SUBMIT_TOOL }
 
 /**
  * Register the terminal submission tool. The call concludes the agent turn, and

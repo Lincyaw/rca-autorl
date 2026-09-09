@@ -38,6 +38,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from autorl.data.samples import read_jsonl
 from autorl.fpg import schema
 
 INCIDENT_TEMPLATE = (
@@ -121,11 +122,7 @@ def prepare(root: Path, *, write: bool = True) -> Report:
     `.invalid`.
     """
     bundle = schema()
-    manifest = [
-        json.loads(line)
-        for line in (root / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    manifest = read_jsonl(root / "manifest.jsonl")
     report = Report()
     splits: dict[str, list[dict[str, Any]]] = {"train": [], "eval": []}
     for index, entry in enumerate(manifest):

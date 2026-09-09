@@ -1,7 +1,6 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { NOTE_CONTENT_DESCRIPTION, NOTE_DESCRIPTION, NOTE_TOOL } from './prompts.js'
 
-export { NOTE_TOOL }
 
 /**
  * Persistent investigation notebook.
@@ -69,9 +68,4 @@ export function registerNotebook(ctx, state) {
       })
     },
   }))
-
-  state.getNotebook = (agentId) => {
-    const key = agentId ?? 'root'
-    return [...(notebooks.get(key) ?? [])]
-  }
 }
