@@ -101,6 +101,14 @@ git submodule update --init --recursive
 UV_HTTP_TIMEOUT=300 uv sync --python 3.12
 ```
 
+The submodule points at `Lincyaw/AReaL`, branch `rca-autorl`, and not at upstream.
+It carries two changes upstream does not have, both of which a rollout needs:
+`RolloutWorkflow.rescore_group`, the hook the group weighting is computed in, and
+a fix for a client `store: false` being read as "do not cache this interaction",
+which silently cost a 279-episode run every one of its training samples. The
+submodule's `upstream` remote is the original, so rebasing onto a newer AReaL
+stays a normal fetch.
+
 `deepseek-harness-sdk` pulls the matching `deepseek-harness-runtime-bin` wheel, so the
 `dsh` runtime ships with the environment and needs no system Node.js. The workflow boots
 the shipped `sdk-minimal` profile — the only one that accepts an arbitrary model id,

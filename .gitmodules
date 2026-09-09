@@ -1,3 +1,4 @@
 [submodule "third_party/AReaL"]
 	path = third_party/AReaL
-	url = https://github.com/inclusionAI/AReaL.git
+	url = https://github.com/Lincyaw/AReaL.git
+	branch = rca-autorl
