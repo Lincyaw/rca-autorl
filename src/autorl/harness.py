@@ -54,6 +54,7 @@ def model_route(
     api_key: str,
     context_window: int = 0,
     temperature: float | None = None,
+    fork: str | None = None,
 ) -> ModelRoute:
     """The scenario layer, plus a declared gateway route when an endpoint is given.
 
@@ -82,6 +83,10 @@ def model_route(
     # request without one and the endpoint's default applies.
     if temperature is not None:
         env["RCA_TEMPERATURE"] = repr(float(temperature))
+    if fork:
+        # A prefix file from `autorl.fork`: the bundle seeds the notebook and
+        # the ledger from it, the sampling route splices its messages.
+        env["RCA_FORK_PREFIX"] = str(fork)
     return ModelRoute(
         GATEWAY_ROUTE,
         model,

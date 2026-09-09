@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from autorl.agent import _answer_of
+from autorl.agent import answer_of
 from autorl.fpg import schema
 
 WINDOW = {"start": "2026-05-01T17:19:07+08:00", "end": "2026-05-01T17:24:07+08:00"}
@@ -69,7 +69,7 @@ TRUTH = schema().Scenario.model_validate(
 
 class AnswerAxesTest(unittest.TestCase):
     def test_truth_reduces_to_roots_subjects_and_subject_edges(self) -> None:
-        answer = _answer_of(None, TRUTH)
+        answer = answer_of(None, TRUTH)
         self.assertEqual(answer.truth["roots"], {"svc:geo"})
         self.assertEqual(answer.truth["subjects"], {"svc:geo", "svc:profile", "svc:frontend"})
         self.assertEqual(
@@ -83,7 +83,7 @@ class AnswerAxesTest(unittest.TestCase):
             "edges": [{"src": "a", "dst": "b"}, {"src": "c", "dst": "b"}],
             "root_causes": ["c"],
         }
-        answer = _answer_of(submission, TRUTH)
+        answer = answer_of(submission, TRUTH)
         self.assertEqual(answer.found["edges"], {"svc:profile->svc:frontend"})
         self.assertEqual(
             answer.claimed["edges"], {"svc:profile->svc:frontend", "svc:rate->svc:frontend"}

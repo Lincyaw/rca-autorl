@@ -8,10 +8,16 @@
  * sides already have — an `exec.agent.id` on one, a `session.id` on the other.
  */
 const unnoted = new Map()
+let inherited = 0
+
+/** A forked episode starts owing the parent's unnoted results. */
+export function seedUnnoted(count) {
+  inherited = count
+}
 
 /** Count one result the current note has not covered yet. */
 export function recordUnnoted(sessionId) {
-  unnoted.set(sessionId, (unnoted.get(sessionId) ?? 0) + 1)
+  unnoted.set(sessionId, unnotedCount(sessionId) + 1)
 }
 
 /** A note landed: everything before it is written down. */
@@ -21,5 +27,5 @@ export function clearUnnoted(sessionId) {
 
 /** How many of the newest results the pruner must leave whole. */
 export function unnotedCount(sessionId) {
-  return unnoted.get(sessionId) ?? 0
+  return unnoted.get(sessionId) ?? inherited
 }

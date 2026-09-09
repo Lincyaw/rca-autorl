@@ -105,3 +105,6 @@
         # note-aware pruner protects.
         noteEvery: 10
         noteLimit: 20
+        # A forked episode's inherited notebook and note debt (spec §4), from
+        # the prefix file `autorl.fork` writes; unset for an ordinary episode.
+        fork: !!js process.env.RCA_FORK_PREFIX

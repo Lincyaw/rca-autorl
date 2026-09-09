@@ -86,8 +86,10 @@ Any AReaL config key can be overridden on the command line. What moves with
 the hardware: `cluster.n_gpus_per_node`, the `d*p*t*` backend suffixes,
 `train_dataset.batch_size`, `rollout.max_concurrent_rollouts`.
 `gconfig.n_samples` is the group the reward weighting reads, not a throughput
-knob. `econfig.difficulty=false` is the flat-score ablation arm. The config
-comments explain the token-budget arithmetic.
+knob. The method's switches live under `econfig`: `difficulty` (sibling
+weighting), `centring` (`rloo`, `grpo`, `remax`), and `fork_every` with
+`fork_siblings` and `fork_continuations` (0 is off). The config comments
+explain the token-budget arithmetic.
 
 ## Validation
 

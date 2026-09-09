@@ -26,10 +26,16 @@ class DshConfig:
     # Weight recall by how few siblings found each element (method spec §3.1);
     # off scores the flat graph score, for the ablation.
     difficulty: bool = True
-    # ReMax centring (spec §3.2): the group's first sample is decoded greedily
-    # and its score is the baseline of the others; it is trained with zero
-    # advantage. Needs actor.reward_norm null, which algorithm.py enforces.
-    remax: bool = False
+    # The centring of spec §3.2, computed by the workflow per trajectory:
+    # rloo, grpo, or remax (the group's first sample decoded greedily, its
+    # score the baseline, trained with zero advantage).
+    centring: str = "rloo"
+    # Forking (spec §4): every `fork_every`-th prompt forks one sample at a
+    # random step into `fork_siblings` responses, each run to the end
+    # `fork_continuations` times. 0 is off.
+    fork_every: int = 0
+    fork_siblings: int = 4
+    fork_continuations: int = 2
 
 
 @dataclass

@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs'
 import { registerNotebook } from './notebook.js'
+import { seedUnnoted } from './note-ledger.js'
 import { registerNotePolicy } from './note-policy.js'
 import { trace } from './debug.js'
 import { registerSqlTool } from './sql-tool.js'
@@ -33,6 +35,10 @@ export function apply(ctx, config = {}) {
   if (snapshot.length === 0) throw new Error('rca-harness: snapshot must be a non-empty path')
   const resultRoot = String(config.resultRoot ?? '').trim()
   if (resultRoot.length === 0) throw new Error('rca-harness: resultRoot must be a non-empty path')
+  // A forked episode starts with the parent's notebook and note debt (spec §4);
+  // the history itself is spliced by the sampling route.
+  const fork = readFork(config.fork)
+  seedUnnoted(fork.unnoted)
 
   // Episode state, keyed by the calling agent so one runtime can serve several
   // sessions. Everything here lives and dies with this plugin's fiber.
@@ -41,6 +47,7 @@ export function apply(ctx, config = {}) {
     resultRoot,
     snapshots: new Map(),
     submitted: new Set(),
+    notes: fork.notes,
     key: exec => exec.agent?.id ?? 'root',
   }
 
@@ -49,6 +56,15 @@ export function apply(ctx, config = {}) {
   registerNotebook(ctx, state)
   if (config.notePolicy !== false) registerNotePolicy(ctx, state, noteEvery, noteLimit)
   registerSubmitResult(ctx, state)
+}
+
+function readFork(path) {
+  if (path === undefined || path === null || String(path).trim() === '') return { notes: [], unnoted: 0 }
+  const parsed = JSON.parse(readFileSync(String(path), 'utf8'))
+  return {
+    notes: Array.isArray(parsed.notes) ? parsed.notes.map(String) : [],
+    unnoted: Number.isInteger(parsed.unnoted) && parsed.unnoted > 0 ? parsed.unnoted : 0,
+  }
 }
 
 function positiveInteger(value, fallback, field) {

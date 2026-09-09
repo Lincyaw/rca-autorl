@@ -43,7 +43,10 @@ class DshWorkflowConfig(TypedDict, total=False):
     turn_discount: float
     temperature: float
     difficulty: bool
-    remax: bool
+    centring: str
+    fork_every: int
+    fork_siblings: int
+    fork_continuations: int
 
 
 class RewardNormConfig(Protocol):
@@ -66,7 +69,7 @@ class GenerationAlgorithmConfig(Protocol):
 
 
 class WorkflowOwnConfig(Protocol):
-    remax: bool
+    centring: str
 
 
 class AReaLRLOOConfig(Protocol):

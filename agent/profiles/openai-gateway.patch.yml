@@ -45,3 +45,4 @@
         provider: gateway-rl
         inner: gateway
         temperature: !!js process.env.RCA_TEMPERATURE
+        fork: !!js process.env.RCA_FORK_PREFIX

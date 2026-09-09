@@ -146,6 +146,22 @@ on the collector, zero for a greedy baseline, unset for the endpoint's
 default. The inner call streams through the same seam a second time, so
 `completions.js` writes a response id once.
 
+## Forking
+
+The harness has no session resume, so a fork (spec §4) rebuilds the state
+instead. `autorl.fork.fork_prefix` folds the parent's session log up to the
+fork step the way the harness folds it, compaction included, and writes the
+messages the model saw, the notes it took, and how many results its last note
+had not covered. The path arrives as `RCA_FORK_PREFIX`: the `gateway-rl`
+adapter splices the messages after the child's own incident prompt on every
+request, `index.js` seeds the notebook, and the ledger starts at the parent's
+debt. DuckDB is rebuilt from the snapshot as always.
+
+The child's own session log holds only what the child did, which is what the
+reward mapping reads. Two things the child does not inherit: the parent's
+saved TSVs, which no tool can read back anyway, and the parent's context
+pressure, since the token meter and the pruner see the child's surface alone.
+
 ## Mechanism here, scenario there
 
 `cordis.patch.yml` mounts the rows with their default config.

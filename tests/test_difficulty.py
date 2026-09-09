@@ -77,66 +77,115 @@ if __name__ == "__main__":
 
 
 class WorkflowHookTest(unittest.TestCase):
-    """`rescore_group` rewrites a whole group's rewards, or refuses to."""
+    """`rescore_group` writes every row's final value, or refuses to."""
 
     def setUp(self) -> None:
         from autorl.agent import DshWorkflow
 
         self.workflow = DshWorkflow.__new__(DshWorkflow)
-        self.workflow._answers = {}
+        self.workflow._samples = {}
         self.workflow.difficulty = True
-        self.workflow.remax = False
+        self.workflow.centring = "rloo"
 
     @staticmethod
     def interaction(reward: float) -> object:
         return type("I", (), {"reward": reward})()
 
-    def result(self, turns: int, last: float = 0.0) -> dict[str, object]:
-        """A sample's completions, the flat score already on its last turn."""
-        return {f"c{i}": self.interaction(last if i == turns - 1 else 0.0) for i in range(turns)}
+    def result(self, turns: int, value: float = 0.0, prefix: str = "c") -> dict[str, object]:
+        """A sample's rows as they arrive: every row already carries its value."""
+        return {f"{prefix}{i}": self.interaction(value) for i in range(turns)}
+
+    def samples(self, *answers) -> None:
+        from autorl.agent import Sample
+
+        self.workflow._samples = {
+            i: Sample(a, weighted_score(a, {})) for i, a in enumerate(answers)
+        }
 
     def run_hook(self, results: list[object]) -> object:
         import asyncio
 
         return asyncio.run(self.workflow.rescore_group(results))
 
-    def test_the_difficulty_delta_lands_on_the_last_turn(self) -> None:
-        ambitious, told = answer({"svc:told", "svc:hard"}), answer({"svc:told"})
-        flat = {0: weighted_score(ambitious, {}), 1: weighted_score(told, {})}
-        self.workflow._answers = {0: (ambitious, flat[0]), 1: (told, flat[1])}
-        results = [self.result(3, flat[0]), self.result(2, flat[1])]
-        out = self.run_hook(results)
-        self.assertIsNotNone(out)
-        first, second = results
-        self.assertEqual([i.reward for i in list(first.values())[:-1]], [0.0, 0.0])
-        self.assertGreater(list(first.values())[-1].reward, list(second.values())[-1].reward)
-        self.assertEqual(list(second.values())[-1].reward, 0.0)
+    def rows(self, result: dict[str, object]) -> list[float]:
+        return [i.reward for i in result.values()]
 
-    def test_with_difficulty_off_the_flat_score_stands(self) -> None:
-        self.workflow.difficulty = False
+    def test_every_row_of_a_trajectory_carries_its_advantage(self) -> None:
+        ambitious, told = answer({"svc:told", "svc:hard"}), answer({"svc:told"})
+        self.samples(ambitious, told)
+        results = [self.result(3, 0.5), self.result(2, 0.3)]
+        self.assertIsNotNone(self.run_hook(results))
+        first, second = self.rows(results[0]), self.rows(results[1])
+        self.assertEqual(len(set(first)), 1)
+        self.assertGreater(first[0], 0.0)
+        self.assertAlmostEqual(first[0], -second[0])
+
+    def test_the_difficulty_switch_changes_only_the_score(self) -> None:
         told = answer({"svc:told"})
-        self.workflow._answers = {0: (told, 0.3), 1: (told, 0.3)}
+        self.samples(told, told)
         results = [self.result(2, 0.3), self.result(2, 0.3)]
         self.run_hook(results)
-        self.assertEqual([list(r.values())[-1].reward for r in results], [0.3, 0.3])
+        self.assertEqual(self.rows(results[0]), [0.0, 0.0])
+        self.workflow.difficulty = False
+        self.samples(told, told)
+        self.run_hook(results)
+        self.assertEqual(self.rows(results[0]), [0.0, 0.0])
 
     def test_remax_subtracts_the_greedy_sample_and_trains_it_with_nothing(self) -> None:
         """Spec §3.2: the first sample is the baseline, not a competitor."""
-        self.workflow.remax = True
+        self.workflow.centring = "remax"
         self.workflow.difficulty = False
         greedy, better = answer({"svc:told"}), answer({"svc:told", "svc:hard"})
-        self.workflow._answers = {0: (greedy, 0.2), 1: (better, 0.6), 2: (greedy, 0.2)}
-        results = [self.result(2, 0.2), self.result(2, 0.6), self.result(2, 0.2)]
+        self.samples(greedy, better, greedy)
+        results = [self.result(2), self.result(2), self.result(2)]
         self.run_hook(results)
-        last = [list(r.values())[-1].reward for r in results]
-        self.assertEqual(last[0], 0.0)
-        self.assertAlmostEqual(last[1], 0.4)
-        self.assertAlmostEqual(last[2], 0.0)
+        self.assertEqual(self.rows(results[0]), [0.0, 0.0])
+        self.assertGreater(self.rows(results[1])[0], 0.0)
+        self.assertEqual(self.rows(results[2]), [0.0, 0.0])
+
+    def test_fork_rows_carry_the_fork_advantage_and_nothing_else(self) -> None:
+        """Spec §4: the siblings replace the parent's turn; continuations are not trained."""
+        from autorl.agent import Sample, Sibling
+
+        told, hard = answer({"svc:told"}), answer({"svc:told", "svc:hard"})
+        parent = Sample(
+            told,
+            0.0,
+            child_ids={"b0", "b0m", "b1", "b1m"},
+            forked_at="c1",
+            siblings=[Sibling("b0", [hard, hard]), Sibling("b1", [told, told])],
+        )
+        self.workflow._samples = {0: parent, 1: Sample(told, 0.0)}
+        first = self.result(3, 0.2)
+        first.update({key: self.interaction(0.0) for key in ("b0", "b0m", "b1", "b1m")})
+        results = [first, self.result(2, 0.2)]
+        self.run_hook(results)
+        self.assertEqual(first["c1"].reward, 0.0)
+        self.assertGreater(first["b0"].reward, 0.0)
+        self.assertAlmostEqual(first["b0"].reward, -first["b1"].reward)
+        self.assertEqual(first["b0m"].reward, 0.0)
+        self.assertEqual(first["b1m"].reward, 0.0)
+        # The parent's own turns still carry its trajectory advantage.
+        self.assertEqual(first["c0"].reward, first["c2"].reward)
 
     def test_an_incomplete_group_is_left_alone(self) -> None:
         """Weights read off a partial group would call its missing parts hard."""
-        self.workflow._answers = {0: (answer({"svc:hard"}), 0.0)}
+        self.samples(answer({"svc:hard"}))
         self.assertIsNone(self.run_hook([self.result(2), None]))
 
     def test_a_group_that_never_recorded_is_left_alone(self) -> None:
         self.assertIsNone(self.run_hook([self.result(2), self.result(2)]))
+
+
+class CentreTest(unittest.TestCase):
+    def test_the_three_centrings(self) -> None:
+        from autorl.agent import centre
+
+        scores = [0.2, 0.6, 0.4]
+        rloo = centre(scores, "rloo")
+        self.assertAlmostEqual(rloo[0], 0.2 - 0.5)
+        grpo = centre(scores, "grpo")
+        self.assertAlmostEqual(sum(grpo), 0.0)
+        self.assertEqual(centre([0.3, 0.3], "grpo"), [0.0, 0.0])
+        for got, want in zip(centre(scores, "remax"), [0.0, 0.4, 0.2], strict=True):
+            self.assertAlmostEqual(got, want)

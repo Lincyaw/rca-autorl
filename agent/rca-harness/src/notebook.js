@@ -23,7 +23,10 @@ export function registerNotebook(ctx, state) {
 
   function getNotebook(exec) {
     const key = state.key(exec)
-    if (!notebooks.has(key)) notebooks.set(key, [])
+    if (!notebooks.has(key)) {
+      // A forked episode inherits the parent's notes, numbered as they were.
+      notebooks.set(key, (state.notes ?? []).map((content, i) => ({ id: `n${i + 1}`, content })))
+    }
     return notebooks.get(key)
   }
 

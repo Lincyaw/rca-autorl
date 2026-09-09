@@ -1,4 +1,5 @@
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
+import { readFileSync } from 'node:fs'
 import { trace } from './debug.js'
 
 /** Stable Cordis plugin name. */
@@ -28,6 +29,13 @@ export const inject = ['llm']
  * The trainer owns the number: it arrives as `RCA_TEMPERATURE` from the same
  * `gconfig` the rollout is trained under, and a greedy baseline is the same
  * route at zero.
+ *
+ * The same seam restores a forked trajectory (spec §4). The harness has no
+ * session resume, but the adapter sees every request's messages, so with
+ * `config.fork` naming a prefix file (`autorl.fork.fork_prefix`) the parent's
+ * history up to the fork step is spliced in after the child's own incident
+ * prompt on every request: the model continues from the parent's state while
+ * the child's session log holds only what the child did.
  */
 export function apply(ctx, config = {}) {
   const provider = String(config.provider ?? '').trim()
@@ -37,6 +45,7 @@ export function apply(ctx, config = {}) {
   }
   const temperature = parseTemperature(config.temperature)
   const sampling = temperature === undefined ? {} : { temperature }
+  const prefix = readPrefix(config.fork)
   const llm = ctx.llm
 
   /** The history names this route; the inner adapter must see its own. */
@@ -44,6 +53,14 @@ export function apply(ctx, config = {}) {
     message.source?.provider === provider
       ? { ...message, source: { ...message.source, provider: inner } }
       : message)
+
+  /** The parent's history goes right after the child's incident prompt. */
+  const continued = messages => {
+    if (prefix.length === 0) return messages
+    const at = messages.findIndex(message => message.role === 'user')
+    if (at < 0) throw new Error('rca-sampling: no incident prompt to fork after')
+    return [...messages.slice(0, at + 1), ...prefix, ...messages.slice(at + 1)]
+  }
 
   async function* forward(options) {
     const call = {
@@ -56,7 +73,7 @@ export function apply(ctx, config = {}) {
     }
     const prepared = await llm.prepareCall(call, options.signal)
     trace('sampling', { provider, inner, ...sampling })
-    yield* prepared.stream({ ...options, ...prepared.config, messages: relabel(options.messages) })
+    yield* prepared.stream({ ...options, ...prepared.config, messages: relabel(continued(options.messages)) })
   }
 
   // Registration asks the adapter about its routes at once, before the inner
@@ -75,6 +92,13 @@ export function apply(ctx, config = {}) {
 
   ctx.llm.registerAdapter([provider], new SamplingAdapter())
   trace('sampling:register', { provider, inner, ...sampling })
+}
+
+function readPrefix(path) {
+  if (path === undefined || path === null || String(path).trim() === '') return []
+  const parsed = JSON.parse(readFileSync(String(path), 'utf8'))
+  if (!Array.isArray(parsed.messages)) throw new Error('rca-sampling: fork prefix has no messages')
+  return parsed.messages
 }
 
 function parseTemperature(value) {

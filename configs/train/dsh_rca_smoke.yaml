@@ -16,9 +16,14 @@ econfig:
   # Sibling difficulty weighting of the graph score (method spec §3.1);
   # false is the flat-score ablation arm.
   difficulty: true
-  # ReMax centring (§3.2): the group's first sample is decoded greedily and
-  # is the baseline; set actor.reward_norm to null with it.
-  remax: false
+  # The centring of §3.2: rloo, grpo, or remax (first sample greedy, its
+  # score the baseline). Forking (§4) is off at fork_every 0; N forks one
+  # sample of every N-th prompt into fork_siblings responses, each run to
+  # the end fork_continuations times.
+  centring: rloo
+  fork_every: 0
+  fork_siblings: 4
+  fork_continuations: 2
 cluster:
   n_nodes: 1
   n_gpus_per_node: 1
@@ -110,14 +115,11 @@ actor:
   reward_scaling: 1.0
   reward_bias: 0.0
   reward_clip: 5.0
-  # The centring of spec §3.2. RLOO: mean_leave1out true, std_level null.
-  # GRPO: mean_leave1out false, std_level group. ReMax: reward_norm null with
-  # econfig.remax true. algorithm.py rejects other combinations.
-  reward_norm:
-    mean_level: group
-    mean_leave1out: true
-    std_level: null
-    group_size: ${gconfig.n_samples}
+  # The advantage is the workflow's (spec §3.2, §4): DshWorkflow.rescore_group
+  # centres each trajectory against its siblings by econfig.centring and
+  # values the fork rows. A framework baseline here would centre row against
+  # row on top of it, so algorithm.py requires null.
+  reward_norm: null
   adv_norm: null
   discount: 1.0
   gae_lambda: 1.0
