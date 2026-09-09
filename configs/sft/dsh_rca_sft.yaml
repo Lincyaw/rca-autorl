@@ -20,14 +20,17 @@ cluster:
     type: nfs
     nfs_record_root: .runs/dsh-rca-sft/name_resolve
 
-# One row per assistant turn, 865 of them from the checked-in 45-session
-# distillation (the five sessions on held-out cases were dropped).
+# One row per assistant turn, 4565 of them from the checked-in 45-session
+# distillation (the five sessions on held-out cases were dropped): 4302 turns
+# across 633 epoch rows, plus the 263 compaction checkpoints the teacher wrote.
+# Every row fits the window — the longest is 31968 tokens, the mean 14280 — so
+# `max_length` filters nothing and the count is the corpus, not a survivor set.
 #
 # batch_size must be a multiple of the FSDP data-parallel width — a batch
 # is split across ranks, so batch_size=1 on 8 ranks fails outright with
 # "Number of items (1) must be >= K (8)".
 #
-# 865 = 5 x 173, so no batch_size that fits 8 ranks divides it and every
+# 4565 = 5 x 11 x 83, so no batch_size that fits 8 ranks divides it and every
 # epoch ends on a ragged batch. `drop_last` is what decides where that tail goes:
 # train drops it by default, but ValidDatasetConfig defaults it to False,
 # and the eval dispatcher then pads the short batch with zero-mask dummy
