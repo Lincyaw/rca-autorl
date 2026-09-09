@@ -265,14 +265,33 @@ A checkout is not a runnable environment. Three things the history does not
 carry have to arrive first:
 
 ```bash
+# Behind a firewall, before anything else. git, uv, huggingface and pnpm each
+# reach a different host and each reads the environment rather than git's own
+# proxy setting, so exporting is what covers all four.
+export https_proxy=http://127.0.0.1:7890 http_proxy=$https_proxy all_proxy=$https_proxy
+export no_proxy=localhost,127.0.0.1
+
+# A clone made before the submodule was repointed keeps the old url in
+# .git/config, where `update` reads it; `sync` is what copies the new one over.
+git pull && git submodule sync --recursive
 git submodule update --init --recursive          # AReaL
 git lfs pull                                      # data/sft/rca_sessions.jsonl
 UV_HTTP_TIMEOUT=300 uv sync --python 3.12
-# The corpus: 7.4G of telemetry, not versioned. Copy a working copy into
-# place, then derive the two files the trainers read. Idempotent.
-rsync -a <host>:<path>/datapacks/ops-lite/ datapacks/ops-lite/
+# The corpus, not versioned. Copy a working copy into place, then derive the
+# two files the trainers read. Idempotent.
+rsync -a --info=progress2 \
+  --include='*/' --include='cases/*/*.parquet' \
+  --include='cases/*/causal_graph_verified.json' --include='cases/*/.invalid' \
+  --include='manifest.jsonl' --exclude='*' \
+  <host>:<path>/datapacks/ops-lite/ datapacks/ops-lite/
 python -m autorl.dataset datapacks/ops-lite       # --check to dry-run
 ```
+
+The filter is not an optimization, it is the whole set: 3.4G of the case
+directory's 7.4G. `result.json` alone is 2.1G and nothing reads it, and
+`injection.json`, `label.txt` and `causal_graph.json` are the answer stated
+plainly — the `sql` tool materializes `*.parquet` and nothing else, so a case
+that does not carry them cannot leak them either.
 
 The published release (`anon-ops/ops-lite` on the Hub) is not a substitute. It
 ships `causal_graph.json` and `conclusion.parquet` but not
