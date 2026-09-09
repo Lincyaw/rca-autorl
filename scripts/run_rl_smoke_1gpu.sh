@@ -49,5 +49,5 @@ python3 -m autorl.train --config configs/train/dsh_rca_smoke.yaml \
   `# NCCL rejects two ranks on one device, so hand the weights over via disk.` \
   +actor.weight_update_mode=disk \
   `# The gateway binds a routable address and refuses the documented default key.` \
-  +rollout.agent.admin_api_key="${AREAL_ADMIN_KEY:-rca-local-smoke-key}" \
+  rollout.agent.admin_api_key="${AREAL_ADMIN_KEY:-rca-local-smoke-key}" \
   "$@"

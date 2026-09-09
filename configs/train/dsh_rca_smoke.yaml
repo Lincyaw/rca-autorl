@@ -43,6 +43,11 @@ rollout:
     mode: inline
     export_style: individual
     turn_discount: 1.0
+    # The rollout proxy binds this node's routable address, not loopback, and
+    # AReaL refuses to expose admin endpoints (grant_capacity, start_session,
+    # export_trajectories) there under the key its own source documents. Any
+    # value other than `areal-admin-key` is accepted; only the default is not.
+    admin_api_key: ${oc.env:AREAL_ADMIN_KEY,rca-local-key}
 
 gconfig:
   n_samples: 8
@@ -76,7 +81,12 @@ actor:
   dtype: bfloat16
   attn_impl: sdpa
   mb_spec:
-    max_tokens_per_mb: 4096
+    # A micro-batch must hold the longest packed sequence or the packer raises
+    # rather than splitting it (`Values [N] is larger than capacity M`), and
+    # with `export_style: individual` one row is one whole request: a prompt
+    # grown to the compaction threshold plus `max_new_tokens`. The context
+    # length is that bound, so it is the smallest value that cannot fail.
+    max_tokens_per_mb: ${sglang.context_length}
   optimizer:
     type: adam
     lr: 5e-6
@@ -128,7 +138,7 @@ ref:
   dtype: ${actor.dtype}
   attn_impl: ${actor.attn_impl}
   mb_spec:
-    max_tokens_per_mb: 4096
+    max_tokens_per_mb: ${actor.mb_spec.max_tokens_per_mb}
   optimizer: null
   scheduling_strategy:
     type: colocation

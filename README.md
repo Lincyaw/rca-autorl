@@ -251,6 +251,77 @@ Override the dataset or model with normal AReaL config patches:
   actor.path=/path/to/model
 ```
 
+## Running it elsewhere
+
+A checkout is not a runnable environment. Three things the history does not
+carry have to arrive first:
+
+```bash
+git submodule update --init --recursive          # AReaL
+git lfs pull                                      # data/sft/rca_sessions.jsonl
+UV_HTTP_TIMEOUT=300 uv sync --python 3.12
+# The corpus: 7.4G of telemetry, not versioned. Copy a working copy into
+# place, then derive the two files the trainers read. Idempotent.
+rsync -a <host>:<path>/datapacks/ops-lite/ datapacks/ops-lite/
+python -m autorl.dataset datapacks/ops-lite       # --check to dry-run
+```
+
+The published release (`anon-ops/ops-lite` on the Hub) is not a substitute. It
+ships `causal_graph.json` and `conclusion.parquet` but not
+`causal_graph_verified.json`, which is the `fpg.Scenario` the reward is computed
+against — an episode on those cases raises rather than scoring, and the whole
+run stops. Transfer a copy that has it, and check before training:
+
+```bash
+ls datapacks/ops-lite/cases/*/causal_graph_verified.json | wc -l   # expect 500
+```
+
+`python -m autorl.dataset datapacks/ops-lite --check` and `./scripts/check.sh`
+both pass without a GPU, so a machine that fails either is not yet ready to
+train.
+
+SFT comes before RL, and not as a preference. RL grades a fault propagation
+graph, and a base model does not emit one: it never reaches `submit_result`, so
+every sibling in the group scores zero, the leave-one-out baseline is zero, and
+the advantage is identically zero. There is nothing to learn from until a
+checkpoint answers in the contract.
+
+```bash
+./scripts/run_sft_smoke.sh total_train_epochs=3 total_train_steps=null
+```
+
+The saver writes an HF model plus tokenizer under
+`<fileroot>/checkpoints/<user>/<experiment_name>/<trial_name>/default/epoch<E>epochstep<S>globalstep<G>`,
+which is what RL then loads:
+
+```bash
+SFT_ROOT=.runs/dsh-rca-sft-smoke/checkpoints/$USER/autorl-dsh-rca-sft-smoke
+CKPT=$(realpath "$(ls -dt $SFT_ROOT/local-smoke/default/epoch* | head -1)")
+
+export RCA_DATASET_ROOT=$PWD/datapacks/ops-lite
+export AREAL_ADMIN_KEY=$(openssl rand -hex 16)
+./scripts/run_smoke.sh actor.path="$CKPT" total_train_steps=200
+```
+
+`run_smoke.sh` is the multi-GPU path; `run_rl_smoke_1gpu.sh` exists only because
+a single consumer card needs a dozen overrides that a datacenter node does not.
+What has to move with the hardware is the parallelism (`cluster.n_gpus_per_node`
+and the `d*p*t*` suffixes of `actor.backend`, `ref.backend`, `rollout.backend`),
+the batch (`train_dataset.batch_size`, which `rollout.consumer_batch_size`
+follows), and `rollout.max_concurrent_rollouts` — one episode is a `dsh`
+subprocess doing DuckDB queries between generations, so a rollout worker spends
+most of its wall clock off the GPU and the smoke value of 1 wastes the node.
+`gconfig.n_samples` is not a throughput knob: it is the group `rescore_group`
+reads difficulty off, and shrinking it makes that weighting noisier.
+
+Two settings are sized so that a real episode does not crash the run, and are
+worth knowing before they are overridden. `actor.mb_spec.max_tokens_per_mb`
+tracks `sglang.context_length` because AReaL's packer refuses a row it cannot
+fit rather than splitting it, and with `export_style: individual` a row is one
+whole request. `rollout.agent.admin_api_key` is read from `AREAL_ADMIN_KEY`
+because the rollout proxy binds the node's routable address, where AReaL refuses
+to serve admin endpoints under the key its own source documents.
+
 ## Validation
 
 ```bash
