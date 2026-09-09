@@ -23,6 +23,9 @@ class DshConfig:
     dataset_root: str = ""
     dsh_home: str = ""
     timeout: float = 1800.0
+    # Weight recall by how few siblings found each element (method spec §3.1);
+    # off scores the flat graph score, for the ablation.
+    difficulty: bool = True
 
 
 @dataclass

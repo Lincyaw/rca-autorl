@@ -21,14 +21,15 @@ cluster:
     nfs_record_root: .runs/dsh-rca-sft/name_resolve
 
 # Same corpus and expansion as the smoke config: one row per assistant
-# turn, 947 of them from the checked-in 50-session distillation.
+# turn, 865 of them from the checked-in 45-session distillation (the five
+# sessions on held-out cases were dropped).
 #
 # batch_size must be a multiple of the FSDP data-parallel width — a batch
 # is split across ranks, so batch_size=1 on 8 ranks fails outright with
 # "Number of items (1) must be >= K (8)".
 #
-# 947 is prime, so no batch_size above 1 divides it and every epoch ends
-# on a ragged batch. `drop_last` is what decides where that tail goes:
+# 865 = 5 x 173, so no batch_size that fits 8 ranks divides it and every
+# epoch ends on a ragged batch. `drop_last` is what decides where that tail goes:
 # train drops it by default, but ValidDatasetConfig defaults it to False,
 # and the eval dispatcher then pads the short batch with zero-mask dummy
 # items that reach the attention kernel as 0-element tensors ("cannot

@@ -1,20 +1,10 @@
 """What an episode earned, and what each of its turns is therefore worth.
 
-Every turn of an episode carries the same value: the episode's outcome, scored
-by `autorl.difficulty` against the siblings that answered the same case. There
-is no turn-level credit, and that is a decision rather than an omission.
-
-The candidate was a per-block hit rate — the share of a block's queries that
-filtered on an entity in the true graph, blocks being the runs of queries the
-`take_note` policy already separates. It correlated 0.35 with the final score
-across the fifty collected episodes, which sounds usable until it is decomposed:
-0.41 for entities the incident text already names, 0.24 for root causes, 0.14
-for the middle of the chain. Its strongest component was querying the service
-the model was handed. Within a chaos family the correlation ran 0.07 to 0.67
-over six to fifteen episodes, which is noise at that sample size. Nothing here
-establishes that the signal is real, and a term that cannot be explained after a
-training run makes the run unexplainable in both directions. See
-`.doc/designs/rl-reward.md`.
+The terminal reward is the graph score of `autorl.difficulty`, weighted by
+sibling difficulty in `DshWorkflow.rescore_group` once the group is in. Every
+turn of an episode carries the same value: there is no turn-level credit. The
+candidate for one was measured and withdrawn; see the Notes log entry
+`2026-09-08-rl-reward-and-credit-assignment`.
 
 What this returns is what AReaL must *add* at each turn, not the value itself:
 it accumulates backward (`reward[i] += reward[i+1] * discount`), so the
@@ -30,9 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fpg import compare_model_to_ground_truth
-
-from autorl.fpg import parse_submission, schema
+from autorl.fpg import schema
 
 SUBMIT_TOOL = "submit_result"
 
@@ -105,19 +93,11 @@ def read_completions(dsh_home: Path, session_id: str) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def outcome_score(submission: Mapping[str, Any] | None, truth: Any) -> float:
-    """The submitted graph against the annotation, or zero when nothing was submitted."""
-    if submission is None:
-        return 0.0
-    return float(compare_model_to_ground_truth(parse_submission(submission), truth).score)
-
-
 def episode_reward(
     *,
     events: Sequence[Mapping[str, Any]],
     completions: Sequence[Mapping[str, Any]],
-    submission: Mapping[str, Any] | None,
-    truth: Any,
+    outcome: float,
     turn_discount: float = 1.0,
 ) -> Episode:
     """Per-completion rewards for one episode.
@@ -127,7 +107,6 @@ def episode_reward(
     leaving it out would not exclude it, it would let it accumulate whatever its
     neighbour carries.
     """
-    outcome = outcome_score(submission, truth)
     episode = Episode(outcome=outcome)
     ordered = [
         c
@@ -136,8 +115,7 @@ def episode_reward(
     ]
     if not ordered:
         return episode
-    by_step = step_completions(events, completions)
-    if not by_step:
+    if not step_completions(events, completions):
         # Nothing to attribute to. The outcome still has to land somewhere, and
         # the last turn the *model* took is where the submission happened — not
         # simply the last completion, which may be the compaction summarizer.
@@ -170,7 +148,6 @@ __all__ = [
     "Episode",
     "episode_reward",
     "load_truth",
-    "outcome_score",
     "read_completions",
     "step_completions",
     "truth_for_case",

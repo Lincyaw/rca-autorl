@@ -25,20 +25,6 @@ def completion(ordinal: int, purpose: str = "agent") -> dict[str, Any]:
     return {"ordinal": ordinal, "responseId": f"chatcmpl-{ordinal}", "purpose": purpose}
 
 
-class Node:
-    def __init__(self, subject: str) -> None:
-        self.subject = subject
-
-
-class Truth:
-    """The parts of an `fpg.Scenario` the reward reads."""
-
-    def __init__(self, subjects: list[str]) -> None:
-        self.graph = type("G", (), {"nodes": [Node(s) for s in subjects]})()
-
-
-TRUTH = Truth(["svc:geo", "svc:profile", "svc:frontend"])
-
 # Two blocks: three queries then a note, two queries then a note.
 EVENTS = [
     message(1),
@@ -102,8 +88,7 @@ class EpisodeRewardTest(unittest.TestCase):
         kwargs: dict[str, Any] = {
             "events": EVENTS,
             "completions": COMPLETIONS,
-            "submission": None,
-            "truth": TRUTH,
+            "outcome": 0.0,
         }
         kwargs.update(overrides)
         return episode_reward(**kwargs)
@@ -145,10 +130,7 @@ class EpisodeRewardTest(unittest.TestCase):
     def test_a_compaction_row_carries_the_same_value_as_the_turns(self) -> None:
         """It is exported and trained on, so it cannot be left to inherit one."""
         episode = episode_reward(
-            events=SHARED_STEP_EVENTS,
-            completions=SHARED_STEP_COMPLETIONS,
-            submission=None,
-            truth=TRUTH,
+            events=SHARED_STEP_EVENTS, completions=SHARED_STEP_COMPLETIONS, outcome=0.5
         )
         for value in self.accumulate(episode.shaped):
             self.assertAlmostEqual(value, episode.outcome)

@@ -6,8 +6,9 @@ does not ship are what a run needs, and both are derived rather than authored:
 - **The incident.** A case has no prompt. What it has is `conclusion.parquet`,
   the per-endpoint normal-vs-abnormal comparison whose non-empty `Issues` column
   is exactly the set of SLO violations an on-call engineer would be paged for.
-  `data.jsonl` reproduces the wording the earlier train-ticket manifest used, and
-  on the 200 cases the two corpora share it reproduces the endpoint list exactly.
+  The manifest reproduces the wording the earlier train-ticket manifest used,
+  and on the 200 cases the two corpora share it reproduces the endpoint list
+  exactly.
 - **A ground truth the bound models accept.** `causal_graph_verified.json` is an
   `fpg.Scenario` already, but it declares `microservices-0.4.0` while
   `configs/fpg/microservices.toml` is 0.5.0, and the factory pins the version
@@ -16,7 +17,11 @@ does not ship are what a run needs, and both are derived rather than authored:
   not a reinterpretation. Three cases are also missing `testbed`, which the
   release manifest has under `system`.
 
-Both steps are idempotent, and `--check` reports without writing.
+The trainable cases are split once, by a hash of the case name, into
+`train.jsonl` and `eval.jsonl`. The method spec evaluates on a fixed held-out
+set chosen before training, and a hash keeps the split stable under re-runs and
+under corpus additions. Both steps are idempotent, and `--check` reports without
+writing.
 
     python -m autorl.dataset datapacks/ops-lite
 """
@@ -24,6 +29,7 @@ Both steps are idempotent, and `--check` reports without writing.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from dataclasses import dataclass, field
@@ -49,6 +55,7 @@ class Report:
     restamped: int = 0
     testbed_filled: int = 0
     incidents: int = 0
+    held_out: int = 0
     skipped: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -94,8 +101,16 @@ def normalize_ground_truth(
     return restamped, filled
 
 
+EVAL_SHARE = 0.1
+
+
+def is_held_out(name: str) -> bool:
+    """One case in ten, chosen by its name alone so the split never moves."""
+    return int(hashlib.sha1(name.encode()).hexdigest(), 16) % 100 < EVAL_SHARE * 100
+
+
 def prepare(root: Path, *, write: bool = True) -> Report:
-    """Restamp every ground truth, and write the manifest of trainable cases.
+    """Restamp every ground truth, and write the manifests of trainable cases.
 
     Trainable means both halves are there: a symptom the episode can start from,
     and a graph it can be scored against, and the annotation side did not flag
@@ -153,6 +168,7 @@ def prepare(root: Path, *, write: bool = True) -> Report:
             report.skipped.append((name, "; ".join(reasons)))
             continue
         report.incidents += 1
+        report.held_out += is_held_out(name)
         rows.append(
             {
                 "id": index,
@@ -171,10 +187,12 @@ def prepare(root: Path, *, write: bool = True) -> Report:
         )
 
     if write:
-        with (root / "data.jsonl").open("w", encoding="utf-8") as handle:
-            for row in rows:
-                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-        # Every case the manifest lists but `data.jsonl` does not, with the
+        for split, held_out in (("train", False), ("eval", True)):
+            with (root / f"{split}.jsonl").open("w", encoding="utf-8") as handle:
+                for row in rows:
+                    if is_held_out(str(row["source"])) == held_out:
+                        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        # Every case the manifest lists but neither split does, with the
         # reason. An excluded case is still a case — keeping the ledger beside
         # the manifest is what makes "446 of 500" auditable rather than folklore.
         with (root / "data.excluded.jsonl").open("w", encoding="utf-8") as handle:
@@ -192,7 +210,8 @@ def main(argv: list[str]) -> None:
     root = Path(args.root).expanduser().resolve()
     report = prepare(root, write=not args.check)
     print(
-        f"{report.cases} case(s): {report.incidents} incident(s), "
+        f"{report.cases} case(s): {report.incidents} incident(s) "
+        f"({report.held_out} held out), "
         f"{report.restamped} ground truth restamped, {report.testbed_filled} testbed filled"
     )
     for name, reason in report.skipped[:20]:

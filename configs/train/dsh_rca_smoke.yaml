@@ -2,7 +2,7 @@ experiment_name: autorl-dsh-rca-smoke
 trial_name: local-smoke
 
 seed: 1
-dynamic_bs: false  # rejected groups are refilled to keep the effective batch size fixed
+dynamic_bs: false  # every group enters the batch; a tied group has zero advantage (spec §3.2)
 enable_offload: false
 total_train_epochs: 1
 total_train_steps: 1
@@ -12,9 +12,10 @@ econfig:
   scenario: rca
   dataset_root: ${oc.env:RCA_DATASET_ROOT,""}
   dsh_home: ${cluster.fileroot}/dsh-home
-  # Per-request output cap sent to the rollout proxy; must stay below
-  # sglang.context_length, otherwise the harness default (256k) is rejected.
   timeout: 1800.0
+  # Sibling difficulty weighting of the graph score (method spec §3.1);
+  # false is the flat-score ablation arm.
+  difficulty: true
 cluster:
   n_nodes: 1
   n_gpus_per_node: 1
@@ -103,6 +104,8 @@ actor:
   reward_scaling: 1.0
   reward_bias: 0.0
   reward_clip: 5.0
+  # The centring of spec §3.2. RLOO: mean_leave1out true, std_level null.
+  # GRPO: mean_leave1out false, std_level group. algorithm.py rejects others.
   reward_norm:
     mean_level: group
     mean_leave1out: true
@@ -166,14 +169,14 @@ train_dataset:
   shuffle: false
   pin_memory: false
   type: rl
-  path: datapacks/ops-lite/data.jsonl
+  path: datapacks/ops-lite/train.jsonl
 
 valid_dataset:
   batch_size: 1
   shuffle: false
   pin_memory: false
   type: rl
-  path: datapacks/ops-lite/data.jsonl
+  path: datapacks/ops-lite/eval.jsonl
 
 saver:
   experiment_name: ${experiment_name}

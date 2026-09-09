@@ -40,6 +40,8 @@ class DshWorkflowConfig(TypedDict, total=False):
     dataset_root: str
     dsh_home: str
     context_window: int
+    turn_discount: float
+    difficulty: bool
 
 
 class RewardNormConfig(Protocol):

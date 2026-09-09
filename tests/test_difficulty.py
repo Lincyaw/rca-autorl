@@ -84,34 +84,44 @@ class WorkflowHookTest(unittest.TestCase):
 
         self.workflow = DshWorkflow.__new__(DshWorkflow)
         self.workflow._answers = {}
+        self.workflow.difficulty = True
 
     @staticmethod
     def interaction(reward: float) -> object:
         return type("I", (), {"reward": reward})()
 
-    def result(self, turns: int) -> dict[str, object]:
-        return {f"c{i}": self.interaction(0.0) for i in range(turns)}
+    def result(self, turns: int, last: float = 0.0) -> dict[str, object]:
+        """A sample's completions, the flat score already on its last turn."""
+        return {f"c{i}": self.interaction(last if i == turns - 1 else 0.0) for i in range(turns)}
 
     def run_hook(self, results: list[object]) -> object:
         import asyncio
 
         return asyncio.run(self.workflow.rescore_group(results))
 
-    def test_the_whole_score_lands_on_the_last_turn(self) -> None:
-        self.workflow._answers = {
-            0: answer({"svc:told", "svc:hard"}),
-            1: answer({"svc:told"}),
-        }
-        results = [self.result(3), self.result(2)]
+    def test_the_difficulty_delta_lands_on_the_last_turn(self) -> None:
+        ambitious, told = answer({"svc:told", "svc:hard"}), answer({"svc:told"})
+        flat = {0: weighted_score(ambitious, {}), 1: weighted_score(told, {})}
+        self.workflow._answers = {0: (ambitious, flat[0]), 1: (told, flat[1])}
+        results = [self.result(3, flat[0]), self.result(2, flat[1])]
         out = self.run_hook(results)
         self.assertIsNotNone(out)
         first, second = results
         self.assertEqual([i.reward for i in list(first.values())[:-1]], [0.0, 0.0])
         self.assertGreater(list(first.values())[-1].reward, list(second.values())[-1].reward)
+        self.assertEqual(list(second.values())[-1].reward, 0.0)
+
+    def test_with_difficulty_off_the_flat_score_stands(self) -> None:
+        self.workflow.difficulty = False
+        told = answer({"svc:told"})
+        self.workflow._answers = {0: (told, 0.3), 1: (told, 0.3)}
+        results = [self.result(2, 0.3), self.result(2, 0.3)]
+        self.run_hook(results)
+        self.assertEqual([list(r.values())[-1].reward for r in results], [0.3, 0.3])
 
     def test_an_incomplete_group_is_left_alone(self) -> None:
         """Weights read off a partial group would call its missing parts hard."""
-        self.workflow._answers = {0: answer({"svc:hard"})}
+        self.workflow._answers = {0: (answer({"svc:hard"}), 0.0)}
         self.assertIsNone(self.run_hook([self.result(2), None]))
 
     def test_a_group_that_never_recorded_is_left_alone(self) -> None:

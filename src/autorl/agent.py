@@ -13,7 +13,7 @@ from typing import Any, Unpack
 from areal.utils import logging
 from deepseek_harness import RunResult
 
-from autorl.difficulty import Answer, group_scores
+from autorl.difficulty import Answer, group_scores, weighted_score
 from autorl.fpg import parse_submission
 from autorl.harness import model_route, require_bundle, run_episode, scenario_patch
 from autorl.interfaces import (
@@ -31,7 +31,7 @@ SUBMIT_TOOL = "submit_result"
 
 
 class DshWorkflow(AReaLAgentWorkflow):
-    """Run one RCA case with DeepSeek Harness and return the placeholder reward."""
+    """Run one RCA case with DeepSeek Harness and return its per-completion rewards."""
 
     def __init__(self, econfig: DshWorkflowConfig | None = None) -> None:
         config = econfig or {}
@@ -45,6 +45,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         # differencing only inverts the accumulation if both sides agree —
         # so it is read from the config rather than assumed here.
         self.turn_discount = float(str(config.get("turn_discount") or 1.0))
+        self.difficulty = bool(config.get("difficulty", True))
         self.dataset_root = str(config.get("dataset_root") or os.getenv("RCA_DATASET_ROOT") or "")
         self.dsh_home = (
             Path(str(config.get("dsh_home") or os.getenv("DSH_HOME") or ".runs/dsh-home"))
@@ -53,7 +54,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         )
         # One workflow instance serves every sample of a group, which is what
         # lets `rescore_group` see them together.
-        self._answers: dict[int, Answer] = {}
+        self._answers: dict[int, tuple[Answer, float]] = {}
         scenario_patch(self.scenario)  # fail at construction, not mid-rollout
         require_bundle(self.dsh_home)
 
@@ -80,22 +81,25 @@ class DshWorkflow(AReaLAgentWorkflow):
         )
         submission = submitted_result(result)
         truth = truth_for_case(Path(data_dir))
+        answer = _answer_of(submission, truth)
+        # The flat graph score. `rescore_group` adds the difficulty delta once
+        # the siblings are in.
+        outcome = weighted_score(answer, {})
         episode = episode_reward(
             events=result.events,
             completions=read_completions(self.dsh_home, session_id),
-            submission=submission,
-            truth=truth,
+            outcome=outcome,
             turn_discount=self.turn_discount,
         )
         logger.info(
             f"Finished RCA episode: case={case_id} finish_reason={result.finish_reason} "
-            f"submitted={submission is not None} outcome={episode.outcome:.3f} "
+            f"submitted={submission is not None} outcome={outcome:.3f} "
             f"rewarded={len(episode.shaped)} unmapped={episode.unmapped}"
         )
-        # Held for `rescore_group`: what this sample claimed, and what was
-        # true, so the group can weight each element by how few siblings found
-        # it. Keyed by sample index, which AReaL sets before the episode runs.
-        self._answers[_sample_index()] = _answer_of(submission, truth)
+        # Held for `rescore_group`: what this sample claimed, what was true,
+        # and the flat score already paid. Keyed by sample index, which AReaL
+        # sets before the episode runs.
+        self._answers[_sample_index()] = (answer, outcome)
         # A dict addresses turns by the completion the proxy cached; a float
         # would land the whole episode on its last one.
         return episode.shaped
@@ -103,11 +107,9 @@ class DshWorkflow(AReaLAgentWorkflow):
     async def rescore_group(self, results: list[Any]) -> list[Any] | None:
         """Rescore a prompt's samples against each other, then forget them.
 
-        `fpg`'s flat comparison counts every element of the true graph alike,
-        which pays the same for the service the incident text handed the model
-        as for the one it had to dig for. The siblings are the only difficulty
-        label available and they cost nothing extra — an element they all found
-        was free, one that a single sample found was the case.
+        The sibling difficulty weighting lives here because the group is
+        visible nowhere else: the flat graph score already on each sample's
+        last turn is replaced by the weighted one.
         """
         answers = self._answers
         self._answers = {}
@@ -116,13 +118,11 @@ class DshWorkflow(AReaLAgentWorkflow):
             # an incomplete group would call its missing parts hard.
             return None
         ordered = [answers[index] for index in sorted(answers)]
-        for result, score in zip(results, group_scores(ordered), strict=True):
-            ids = list(result)
-            for completion_id in ids[:-1]:
-                result[completion_id].reward = 0.0
-            # Values accumulate backward, and with no shaping every turn's
-            # value is the episode's score, so all of it sits on the last own.
-            result[ids[-1]].reward = score
+        flat = [score for _, score in ordered]
+        scores = group_scores([a for a, _ in ordered]) if self.difficulty else flat
+        for result, before, after in zip(results, flat, scores, strict=True):
+            last = list(result)[-1]
+            result[last].reward += after - before
         return results
 
     def _run_episode(
@@ -241,27 +241,28 @@ def _sample_index() -> int:
 
 
 def _answer_of(submission: dict[str, JsonValue] | None, truth: Any) -> Answer:
-    """One sample's claimed and correct elements, as the sets difficulty reads."""
-    incoming = {edge.dst for edge in truth.graph.edges}
-    true_subjects = frozenset(node.subject for node in truth.graph.nodes)
-    true_roots = frozenset(n.subject for n in truth.graph.nodes if n.id not in incoming)
-    empty = frozenset[str]()
-    if submission is None:
-        return Answer(
-            found={"roots": empty, "subjects": empty, "edges": empty},
-            truth={"roots": true_roots, "subjects": true_subjects, "edges": empty},
-            claimed={"roots": empty, "subjects": empty, "edges": empty},
-        )
-    answer = parse_submission(submission)
-    subject_of = {node.id: node.subject for node in answer.nodes}
-    claimed_subjects = frozenset(subject_of.values())
-    claimed_roots = frozenset(subject_of[i] for i in answer.root_causes if i in subject_of)
-    return Answer(
-        found={
-            "roots": claimed_roots & true_roots,
-            "subjects": claimed_subjects & true_subjects,
-            "edges": empty,
-        },
-        truth={"roots": true_roots, "subjects": true_subjects, "edges": empty},
-        claimed={"roots": claimed_roots, "subjects": claimed_subjects, "edges": empty},
+    """One sample's claimed and correct elements, as the sets difficulty reads.
+
+    Three axes, all on subjects: the root causes, every node, and every edge as
+    an ordered subject pair. Predicates are left out, the way `fpg`'s own
+    scalar leaves them out.
+    """
+    truths = _elements(
+        truth.graph.nodes, truth.graph.edges, [n.id for n in truth.graph.root_causes]
     )
+    if submission is None:
+        claimed = {axis: frozenset[str]() for axis in truths}
+    else:
+        answer = parse_submission(submission)
+        claimed = _elements(answer.nodes, answer.edges, answer.root_causes)
+    found = {axis: claimed[axis] & truths[axis] for axis in truths}
+    return Answer(found=found, truth=truths, claimed=claimed)
+
+
+def _elements(nodes: Any, edges: Any, root_ids: Any) -> dict[str, frozenset[str]]:
+    subject = {node.id: str(node.subject) for node in nodes}
+    return {
+        "roots": frozenset(subject[i] for i in root_ids if i in subject),
+        "subjects": frozenset(subject.values()),
+        "edges": frozenset(f"{subject[e.src]}->{subject[e.dst]}" for e in edges),
+    }
