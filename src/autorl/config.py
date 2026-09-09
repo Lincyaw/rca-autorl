@@ -26,6 +26,10 @@ class DshConfig:
     # Weight recall by how few siblings found each element (method spec §3.1);
     # off scores the flat graph score, for the ablation.
     difficulty: bool = True
+    # ReMax centring (spec §3.2): the group's first sample is decoded greedily
+    # and its score is the baseline of the others; it is trained with zero
+    # advantage. Needs actor.reward_norm null, which algorithm.py enforces.
+    remax: bool = False
 
 
 @dataclass

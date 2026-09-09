@@ -39,6 +39,10 @@ export function apply(ctx, config = {}) {
   // an ordinal shared across them would leave gaps in each one's file — which
   // is exactly the ordering the trainer reads to place a reward on a turn.
   const ordinals = new Map()
+  // A route that delegates to another (the rca-sampling row) streams the same
+  // completion through this seam twice, once per layer; the trainer counts
+  // one request per agent step, so a response id is written once.
+  const seen = new Map()
 
   ctx.on('llm/stream', (options, next) => record(options, next()), { global: true })
 
@@ -49,6 +53,13 @@ export function apply(ctx, config = {}) {
     for await (const chunk of upstream) {
       if (chunk.type === 'finish') {
         const responseId = chunk.replayState?.response?.responseId
+        const ids = seen.get(session) ?? new Set()
+        seen.set(session, ids)
+        if (responseId && ids.has(responseId)) {
+          yield chunk
+          continue
+        }
+        if (responseId) ids.add(responseId)
         const line = {
           ordinal,
           responseId: responseId ?? null,

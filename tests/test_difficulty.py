@@ -85,6 +85,7 @@ class WorkflowHookTest(unittest.TestCase):
         self.workflow = DshWorkflow.__new__(DshWorkflow)
         self.workflow._answers = {}
         self.workflow.difficulty = True
+        self.workflow.remax = False
 
     @staticmethod
     def interaction(reward: float) -> object:
@@ -118,6 +119,19 @@ class WorkflowHookTest(unittest.TestCase):
         results = [self.result(2, 0.3), self.result(2, 0.3)]
         self.run_hook(results)
         self.assertEqual([list(r.values())[-1].reward for r in results], [0.3, 0.3])
+
+    def test_remax_subtracts_the_greedy_sample_and_trains_it_with_nothing(self) -> None:
+        """Spec §3.2: the first sample is the baseline, not a competitor."""
+        self.workflow.remax = True
+        self.workflow.difficulty = False
+        greedy, better = answer({"svc:told"}), answer({"svc:told", "svc:hard"})
+        self.workflow._answers = {0: (greedy, 0.2), 1: (better, 0.6), 2: (greedy, 0.2)}
+        results = [self.result(2, 0.2), self.result(2, 0.6), self.result(2, 0.2)]
+        self.run_hook(results)
+        last = [list(r.values())[-1].reward for r in results]
+        self.assertEqual(last[0], 0.0)
+        self.assertAlmostEqual(last[1], 0.4)
+        self.assertAlmostEqual(last[2], 0.0)
 
     def test_an_incomplete_group_is_left_alone(self) -> None:
         """Weights read off a partial group would call its missing parts hard."""

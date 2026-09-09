@@ -19,6 +19,7 @@ agent/
     src/compaction.js  compaction-basic with the RCA checkpoint template
     src/pruner.js      note-aware tool-result pruner
     src/completions.js records the provider response id per LLM request
+    src/sampling.js    a route that is another route plus a temperature
     src/prompts.js     every model-facing string
     src/debug.js       env-gated trace
   profiles/
@@ -128,6 +129,22 @@ arithmetic inline.
 read off `finish.replayState`. AReaL keys its reward cache by that id and the
 session log does not carry it; `purpose` separates the agent's turns from the
 compaction summarizer's.
+
+## Sampling temperature
+
+The harness builds each model call from `AgentOptions`, which has no sampling
+field, so a request leaves without a temperature and the endpoint's default
+applies. The adapters forward `options.temperature` when it is set; what is
+missing is a way to set it, and the `llm/stream` middleware cannot, because
+the runtime dispatches the options it prepared and refuses a changed config.
+
+`sampling.js` registers `gateway-rl`, a route whose adapter prepares the same
+call on `gateway` with the temperature in the call config from the start, so
+the runtime's equality check holds. The number is `RCA_TEMPERATURE` in the
+route's environment: `gconfig.temperature` on the rollout path, `--temperature`
+on the collector, zero for a greedy baseline, unset for the endpoint's
+default. The inner call streams through the same seam a second time, so
+`completions.js` writes a response id once.
 
 ## Mechanism here, scenario there
 

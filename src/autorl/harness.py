@@ -32,7 +32,7 @@ BUNDLE_NAME = "@rca-autorl/dsh-rca-harness"
 PROFILE = "sdk-minimal"
 
 GATEWAY_SCENARIO = "openai-gateway"
-GATEWAY_ROUTE = "gateway"
+GATEWAY_ROUTE = "gateway-rl"  # `gateway` plus the declared temperature; see the patch
 DEEPSEEK_ROUTE = "deepseek-official"
 
 
@@ -53,6 +53,7 @@ def model_route(
     base_url: str,
     api_key: str,
     context_window: int = 0,
+    temperature: float | None = None,
 ) -> ModelRoute:
     """The scenario layer, plus a declared gateway route when an endpoint is given.
 
@@ -75,6 +76,12 @@ def model_route(
     patches = (scenario_patch(scenario),)
     if not base_url:
         return ModelRoute(DEEPSEEK_ROUTE, model, patches, env)
+    # The temperature is the trainer's number, passed through rather than set
+    # here: `gconfig.temperature` on the rollout path, whatever the collector
+    # was told, and zero for a greedy baseline. Unset, the route leaves the
+    # request without one and the endpoint's default applies.
+    if temperature is not None:
+        env["RCA_TEMPERATURE"] = repr(float(temperature))
     return ModelRoute(
         GATEWAY_ROUTE,
         model,

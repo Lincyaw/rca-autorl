@@ -16,6 +16,9 @@ econfig:
   # Sibling difficulty weighting of the graph score (method spec §3.1);
   # false is the flat-score ablation arm.
   difficulty: true
+  # ReMax centring (§3.2): the group's first sample is decoded greedily and
+  # is the baseline; set actor.reward_norm to null with it.
+  remax: false
 cluster:
   n_nodes: 1
   n_gpus_per_node: 1
@@ -67,6 +70,9 @@ gconfig:
   # 819 tokens of margin.
   max_new_tokens: 12288
   greedy: false
+  # Passed through to the harness as the route's temperature (train.py ->
+  # DshWorkflow -> RCA_TEMPERATURE -> the rca-sampling row), so the rollout
+  # samples at the temperature actor.temperature recomputes logprobs at.
   temperature: 0.7
   reward_normalization: false
   drop_incomplete_group: true
@@ -105,7 +111,8 @@ actor:
   reward_bias: 0.0
   reward_clip: 5.0
   # The centring of spec §3.2. RLOO: mean_leave1out true, std_level null.
-  # GRPO: mean_leave1out false, std_level group. algorithm.py rejects others.
+  # GRPO: mean_leave1out false, std_level group. ReMax: reward_norm null with
+  # econfig.remax true. algorithm.py rejects other combinations.
   reward_norm:
     mean_level: group
     mean_leave1out: true

@@ -19,6 +19,11 @@
 #
 # The deployment's own values arrive as environment variables rather than
 # literals, so one layer serves every gateway and no key enters the repository.
+#
+# `rca-sampling` is the route a launch actually names: `gateway` plus the
+# temperature the trainer declares in `RCA_TEMPERATURE`. The harness has no
+# other way to put a sampling parameter on a request (see src/sampling.js);
+# with the variable unset the route is a plain alias of `gateway`.
 - insert:
     - id: credentials
       name: '@deepseek-ai/dsh-credentials-local'
@@ -34,3 +39,9 @@
             models:
               - id: !!js process.env.RCA_GATEWAY_MODEL
                 contextWindow: !!js Number(process.env.DSH_CONTEXT_WINDOW ?? 262144)
+    - id: rca-sampling
+      name: '@rca-autorl/dsh-rca-harness/sampling'
+      config:
+        provider: gateway-rl
+        inner: gateway
+        temperature: !!js process.env.RCA_TEMPERATURE

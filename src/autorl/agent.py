@@ -46,6 +46,8 @@ class DshWorkflow(AReaLAgentWorkflow):
         # so it is read from the config rather than assumed here.
         self.turn_discount = float(str(config.get("turn_discount") or 1.0))
         self.difficulty = bool(config.get("difficulty", True))
+        self.remax = bool(config.get("remax", False))
+        self.temperature = config.get("temperature")
         self.dataset_root = str(config.get("dataset_root") or os.getenv("RCA_DATASET_ROOT") or "")
         self.dsh_home = (
             Path(str(config.get("dsh_home") or os.getenv("DSH_HOME") or ".runs/dsh-home"))
@@ -71,8 +73,11 @@ class DshWorkflow(AReaLAgentWorkflow):
         incident = _required_text(data, ("incident", "question", "prompt"))
         data_dir = resolve_data_dir(data, self.dataset_root)
         session_id = f"rca-{uuid.uuid4().hex}"
+        sample = _sample_index()
+        # Under ReMax the group's first sample is the greedy baseline.
+        temperature = 0.0 if self.remax and sample == 0 else self.temperature
         result = await asyncio.to_thread(
-            self._run_episode, incident, data_dir, str(base_url), api_key, session_id
+            self._run_episode, incident, data_dir, str(base_url), api_key, session_id, temperature
         )
         # A row whose id is 0 is a row, so this is not an `or` chain.
         case_id = next(
@@ -99,7 +104,7 @@ class DshWorkflow(AReaLAgentWorkflow):
         # Held for `rescore_group`: what this sample claimed, what was true,
         # and the flat score already paid. Keyed by sample index, which AReaL
         # sets before the episode runs.
-        self._answers[_sample_index()] = (answer, outcome)
+        self._answers[sample] = (answer, outcome)
         # A dict addresses turns by the completion the proxy cached; a float
         # would land the whole episode on its last one.
         return episode.shaped
@@ -120,13 +125,26 @@ class DshWorkflow(AReaLAgentWorkflow):
         ordered = [answers[index] for index in sorted(answers)]
         flat = [score for _, score in ordered]
         scores = group_scores([a for a, _ in ordered]) if self.difficulty else flat
+        if self.remax:
+            # The framework applies no baseline of its own here (spec §3.2):
+            # the last turn carries the advantage outright, and the greedy
+            # sample that supplied the baseline carries none.
+            for index, (result, score) in enumerate(zip(results, scores, strict=True)):
+                result[list(result)[-1]].reward = 0.0 if index == 0 else score - scores[0]
+            return results
         for result, before, after in zip(results, flat, scores, strict=True):
             last = list(result)[-1]
             result[last].reward += after - before
         return results
 
     def _run_episode(
-        self, incident: str, data_dir: str, base_url: str, api_key: str, session_id: str
+        self,
+        incident: str,
+        data_dir: str,
+        base_url: str,
+        api_key: str,
+        session_id: str,
+        temperature: float | None,
     ) -> RunResult:
         # AReaL's proxy is reached as a declared route, the same way the SFT
         # collector reaches a teacher endpoint; `model_route` says why a
@@ -139,6 +157,7 @@ class DshWorkflow(AReaLAgentWorkflow):
             base_url=base_url,
             api_key=api_key,
             context_window=self.context_window,
+            temperature=temperature,
         )
         return run_episode(
             dsh_home=self.dsh_home,

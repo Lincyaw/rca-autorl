@@ -127,6 +127,7 @@ def main(argv: list[str]) -> None:
     # SFT config's max_length.
     parser.add_argument("--max-tokens", type=int, default=12288)
     parser.add_argument("--context-window", type=int, default=32768)
+    parser.add_argument("--temperature", type=float, default=None, help="unset: endpoint default")
     parser.add_argument("--timeout", type=float, default=3600.0)
     parser.add_argument("--dataset-root", default="")
     parser.add_argument("--report", default="", help="write the per-case summary as JSONL")
@@ -144,6 +145,7 @@ def main(argv: list[str]) -> None:
         base_url=args.base_url,
         api_key=args.api_key,
         context_window=args.context_window,
+        temperature=args.temperature,
     )
     print(f"teacher: provider={route.provider} model={route.model} {args.base_url}", flush=True)
 

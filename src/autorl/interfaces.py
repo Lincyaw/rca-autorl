@@ -41,7 +41,9 @@ class DshWorkflowConfig(TypedDict, total=False):
     dsh_home: str
     context_window: int
     turn_discount: float
+    temperature: float
     difficulty: bool
+    remax: bool
 
 
 class RewardNormConfig(Protocol):
@@ -63,10 +65,15 @@ class GenerationAlgorithmConfig(Protocol):
     reward_normalization: bool
 
 
+class WorkflowOwnConfig(Protocol):
+    remax: bool
+
+
 class AReaLRLOOConfig(Protocol):
     actor: ActorAlgorithmConfig
     gconfig: GenerationAlgorithmConfig
     critic: object | None
+    econfig: WorkflowOwnConfig
 
 
 @runtime_checkable

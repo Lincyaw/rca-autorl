@@ -9,8 +9,9 @@ def validate_areal_v2_rloo(config: AReaLRLOOConfig) -> None:
     """Fail fast unless AReaL v2 is configured as one of the centrings of spec §3.2.
 
     RLOO is group leave-one-out mean with no spread; GRPO is group mean with
-    group standard deviation. Anything else is a config that silently trains
-    with a baseline the method does not define.
+    group standard deviation; ReMax is no framework baseline at all, because
+    the workflow subtracts the greedy sample's score itself. Anything else is
+    a config that silently trains with a baseline the method does not define.
     """
     group_size = int(config.gconfig.n_samples)
     reward_norm = config.actor.reward_norm
@@ -20,10 +21,13 @@ def validate_areal_v2_rloo(config: AReaLRLOOConfig) -> None:
     if config.gconfig.reward_normalization:
         errors.append("gconfig.reward_normalization must be false (actor.reward_norm decides)")
     if reward_norm is None:
-        errors.append("actor.reward_norm is required")
+        if not config.econfig.remax:
+            errors.append("actor.reward_norm is required unless econfig.remax is set")
     else:
         if reward_norm.mean_level != "group":
             errors.append("actor.reward_norm.mean_level must be group")
+        if config.econfig.remax:
+            errors.append("econfig.remax computes its own baseline: actor.reward_norm must be null")
         rloo = reward_norm.mean_leave1out and reward_norm.std_level is None
         grpo = not reward_norm.mean_leave1out and reward_norm.std_level == "group"
         if not (rloo or grpo):

@@ -11,7 +11,8 @@
     "./package.json": "./package.json",
     "./compaction": "./src/compaction.js",
     "./pruner": "./src/pruner.js",
-    "./completions": "./src/completions.js"
+    "./completions": "./src/completions.js",
+    "./sampling": "./src/sampling.js"
   },
   "files": [
     "src",
