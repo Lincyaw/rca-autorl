@@ -116,6 +116,16 @@ class Qwen3LossMaskTests(unittest.TestCase):
             self.assertTrue(any(row["loss_mask"]), "no tokens supervised")
             self.assertFalse(all(row["loss_mask"]), "no tokens unsupervised")
 
+    def test_turns_before_first_supervised_are_prompt_only(self) -> None:
+        rows = convert_sample(
+            {"messages": MESSAGES, "tools": TOOLS, "first_supervised": 3},
+            tokenizer=self.tokenizer,
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertIn("record the finding", self._decode(rows[0], 1))
+        self.assertIn("SHOW TABLES", self._decode(rows[0], 0))
+        self.assertNotIn("SHOW TABLES", self._decode(rows[0], 1))
+
     def test_supervised_span_is_the_turn_alone(self) -> None:
         first, second = self.rows
         self.assertIn("look at the tables first", self._decode(first, 1))

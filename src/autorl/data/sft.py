@@ -3,13 +3,15 @@
 Consumes the rows `autorl.data.export` writes — one conversation per session,
 with the tool schemas the teacher was offered::
 
-    {"phase": "rca", "sample_id": ..., "root_session_id": ...,
+    {"phase": "rca" | "checkpoint", "sample_id": ..., "root_session_id": ...,
      "messages": [system, user, assistant, tool, user, assistant, ...],
-     "tools": [...], "meta": {...}}
+     "tools": [...], "first_supervised": k, "meta": {...}}
 
 and produces AReaL's SFT rows, `{"input_ids", "loss_mask"}`.
 
-**One row per assistant turn.** For turn *k* the prompt is
+**One row per assistant turn from `first_supervised` on.** Messages before
+that index were written on an earlier context and are supervised there; here
+they are the prompt only. For turn *k* the prompt is
 `apply_chat_template(messages[:k], tools=..., add_generation_prompt=True)` and
 the sequence is `apply_chat_template(messages[:k+1], ...)`; the mask is 0 over
 the prompt and 1 over the rest. That is the same shape AReaL's own `gsm8k` SFT
@@ -72,9 +74,12 @@ def convert_sample(
     if not isinstance(messages, list) or not messages:
         raise TypeError("SFT row must carry a non-empty 'messages' list")
     tools = sample.get("tools") or None
+    first_supervised = int(sample.get("first_supervised", 0))
 
     rows: list[dict[str, Any]] = []
     for index, message in enumerate(messages):
+        if index < first_supervised:
+            continue
         if not isinstance(message, Mapping) or message.get("role") != "assistant":
             continue
         row = _turn_row(tokenizer, messages, index, tools)
