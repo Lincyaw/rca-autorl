@@ -1,96 +1,70 @@
 # CLAUDE.md
 
-See `AGENTS.md` for detailed coding style, testing, and commit guidelines — those take precedence over anything here.
+See `AGENTS.md` for coding style, testing, and commit guidelines — those take precedence over anything here.
 
 ## What this repo is
 
-本仓库承载一个完整的科研项目，覆盖从 idea 形成到代码实现、实验运行、再到论文撰写的全流程。**不是单纯的代码仓库，也不是单纯的论文仓库**。
+RCA benchmark loop 三个子项目（Injector / Verifier / RCA agent）中 **RCA agent** 的训练代码。研究主题：**Cost-Sensitive Active Diagnosis** —— 把微服务故障定位建模为部分可观测下的 cost-sensitive active diagnosis，agent 通过只读查询收集证据，提交一张 fault propagation graph，reward 只来自程序可校验的 outcome。
 
-研究主题：**Self-Evolving Microservice RCA via Triadic Self-Play** —— 借鉴 self_play_evolves / GASP / SGS 三篇论文的三元角色框架（Proposer/Solver/Verifier），训练一组围绕微服务故障定位的 LLM agent。当前主线包含 4 个相对独立的角色（RCA / Fault Injection / Verifier / Controller），用 data-level 机制做 strong-to-weak 同步。
+**设计文档不在本仓库。** 全部在 Notes 仓库（`~/AoyangSpace/Notes`）的 `research/ongoing/rcabench/rca/`：
 
-## 仓库布局（high level）
+- `CONTEXT.md` —— 词表与阅读顺序，先读这个
+- `idea/proposal.md` —— 22-field 项目 brief（状态、成功标准、当前最重要的问题）
+- `idea/method.md` —— 训练方法 spec（reward、credit assignment、dynamic sampling、fork、ablation grid）
+- `log/` —— 决策记录；`2026-09-08-rl-reward-and-credit-assignment.md` 是当前 reward 的依据
+- 上一级 `rcabench/CONTEXT.md` 讲三个子项目怎么组成一个 loop，injector / verifier 各有自己的目录
+
+本仓库只回答"代码做了什么、怎么跑"：`README.md`（入口与流程）和 `agent/README.md`（harness 设计）。设计层面的改动先进 Notes，再改代码；Notes 的规则是新 log entry 要先问过用户。
+
+## 仓库布局
 
 ```
-.doc/
-  designs/           — 系统设计文档（agent 角色 spec、训练框架、harness 设计）
-  references/        — 参考文献 PDF + 综述笔记
-paper/
-  ideas/             — research idea 家族（v0 母 idea + v1 子 hypothesis）
-  (later)            — 后续会有 sections/、figures/、experiments/ 等
-src/autorl/          — DeepSeek Harness workflow 与 AReaL 训练入口
-agent/               — 我们自己的 harness：dsh bundle（sql over snapshot / take_note / submit_result）+ scenario patch
-configs/fpg/         — FPG 答案契约的 vocabulary profile（entity 类型 / failure mode / propagation mechanism）
-datapacks/ops-lite/  — 训练/评测语料：500 case，含 fpg Scenario 形态的 ground truth（telemetry 不入 git）
-experiments/         — 实验配置、运行脚本、结果记录
-third_party/         — AReaL 子模块；DeepSeek Harness 通过锁定版本的 SDK package 引入
+src/autorl/          AReaL workflow (agent.py)、reward + difficulty、fpg 绑定、dataset 准备、train / train_sft 入口、data/ (collect / export / sft)
+agent/               dsh bundle（sql / take_note / submit_result / compaction / pruner）+ scenario patch
+configs/fpg/         答案契约的 vocabulary profile；configs/train、configs/sft 训练配置
+data/sft/            45 条蒸馏 teacher episode（git-lfs；只含 train 划分的 case）
+datapacks/ops-lite/  500-case 语料，含 fpg Scenario ground truth（不入 git）
+tests/               reward、difficulty、contract 一致性、SFT mask、answer-leak
+third_party/AReaL    fork Lincyaw/AReaL 分支 rca-autorl（多 rescore_group hook 与 store 修复）
 ```
 
-答案契约（RCA agent 的输出与 ground truth 共用）用外部 `fpg` 包
-（github.com/Lincyaw/fpg-convention，按 commit 锁定）：agent 输出是
-`ModelRCAOutput`，标注是 `Scenario`。词表 `configs/fpg/microservices.toml`
-沿用标注侧已有的那份（0.4.0 → 0.5.0 加性迁移），不是我们另起的。
-`src/autorl/fpg.py` 绑定两者并生成 `agent/rca-harness/src/vocabulary.js`，
-harness 工具据此在提交时就拒收不合契约的答案；
-`python -m autorl.dataset` 负责语料准备（incident prompt + ground truth 重打版本）。
+答案契约用外部 `fpg` 包（github.com/Lincyaw/fpg-convention，按 commit 锁定）：agent 输出 `ModelRCAOutput`，标注是 `Scenario`。词表 `configs/fpg/microservices.toml` 沿用标注侧的那份。`src/autorl/fpg.py` 绑定两者并生成 `agent/rca-harness/src/vocabulary.js`，harness 在提交时拒收不合契约的答案。
 
-## 当前研究状态
+## 当前状态（2026-09-09）
 
-- 主线 idea：`paper/ideas/triadic-self-play/v0-overview.md` 及同目录下 4 个 v1 子 idea；索引 `paper/ideas/INDEX.md`
-- 主线高层架构：v0-overview 指明 4 个主线 agent = **RCA / FI / Verifier / Controller**
-- 训练流程：`.doc/designs/training-pipeline.md`（Stage 0/1/2/3 训练过程轴，与下方 Phase 北极星正交）
-- RL reward 建模：`.doc/designs/rl-reward.md`（一个真实 case 的完整计算过程）
-- 角色与指标 spec：`.doc/designs/agent-roles-spec.md`（角色定义 §2、reward 与指标定义 §5；Verifier ≡ 旧 spec 的 Verification Agent）。代码结构见 `README.md` 与 `agent/README.md`
-- 当前进度：Phase 1 RCA 基线（早期）
-- 平行研究线（正交于主线，主线通后启动）：
-  - **Controller harness** —— 黑盒 wrapper，见 `paper/ideas/controller-harness/v0.md` + `.doc/designs/llm-harness.md`
-  - **World Model** —— 三元组任务隐含的因果传播能力，先 probe 后 standalone，见 `paper/ideas/world-model/v0.md`
+- RL 路径在单卡上端到端跑通过（rollout → reward → rescore_group → 一步 PPO 更新），但还没观察到非零 advantage
+- reward = fpg 约定的三轴图 F1（method spec §2）；advantage = sibling 难度加权后的 RLOO（§3，`econfig.difficulty` 关掉即 flat 分数的消融臂）。没有 cost，没有 turn-level credit
+- method spec 里的 target design（declare/seal、anomaly set 与 attribution/dismissal、per-turn cost、selective fork、curriculum feedback）**都还没实现**；spec 自己标明了哪些是 target、哪些是 current
+- SFT 数据：45 条 teacher episode 已 check in（原 50 条，去掉了 5 条落在 held-out 划分的）；下一步是 SFT 到一个会提交 graph 的 checkpoint，再测 within-group variance
 
 ## 工作流约定
 
-- **新 idea / hypothesis**：先在 `paper/ideas/` 加文档，至少有 motivation + setting + modeling approach。validation 字段可后补
-- **新实验**：从某个 v1 idea 派生，进 `experiments/plans/`，测得的指标回写到 idea 文档的 success criteria
-- **代码改动**：遵循 `AGENTS.md` 的 code style；每种 agent 使用直接的 AReaL workflow，不再建设仓库内通用框架
-- **论文写作**：进入到产出阶段后用 `paper/sections/` + LaTeX 工程化（晚期再启动）
+- **代码改动**：遵循 `AGENTS.md`；agent loop 留在 DeepSeek Harness，本仓库只负责 data、harness 组合、workflow、reward 与 trainer wiring。不建仓库内通用框架
+- **设计改动**：先改 Notes 的 method spec 或加 log entry，再改代码。代码注释引用 Notes 时用文档名（如 `2026-09-08-rl-reward-and-credit-assignment`），不用本机路径
+- **新实验**：从 Notes 的 method spec §9 ablation grid 派生；协议进 Notes 的 `experiments/`，代码与配置进本仓库 `configs/`
 
-## North-star targets（按研究阶段）
+## North-star targets
 
-> Phase = 结果里程碑轴（本节）。Stage = 训练过程轴（见 `.doc/designs/training-pipeline.md`）。两轴正交。
+以 Notes `idea/proposal.md` 第 17、18 字段为准，这里只列当前阶段要看的数：
 
 ### Scaffold（始终激活）
-1. **Pipeline health** — Ruff 和 mypy 全部通过（`./scripts/check.sh`）
-2. **Integration simplicity** — Agent loop 留在 DeepSeek Harness；本仓库负责 data、harness 组合（`agent/`）、workflow、verifier 与 trainer wiring
+1. **Pipeline health** —— `./scripts/check.sh` 全过（Ruff + mypy + vocabulary.js 新鲜度）；`python -m unittest discover -s tests` 全过
+2. **Integration simplicity** —— 同等指标下选代码更少的方案
 
-### Phase 1 — RCA baseline
-3. **RCA F1** > 0.6 on RCABench eval
-4. **RCA efficiency** — avg_turns < 20, false_positive_rate < 0.15
+### 当前阶段：SFT → RL 就绪
+3. **SFT 产出会提交的 checkpoint** —— held-out case 上 `submit_result` 被接受的比例 > 0.8
+4. **Within-group variance** —— K=8 个 sibling 的 weighted score 在足够比例的 case 上方差非零，RL batch 不会被 dynamic sampling 掏空（这是 method spec 全部设计赖以成立的第一个测量）
 
-### Phase 2 — Each agent independent (mocked dependencies)
-5. **Fault Injection** — injection_validity_rate > 0.8
-6. **Verifier (judge accuracy)** — rca_judgment_accuracy > 0.8（LLM-as-judge 与硬编码 F1 anchor 的一致性）
-7. **Verifier (process score)** — hop 三子分自洽性 ≥ 0.7（同 trajectory 多次采样的一致率）
+### 下一阶段：RL baseline
+5. 训练后的 agent 在 frozen held-out 上的 root-cause accuracy 与 path validity 超过两个 baseline：one-shot prompting、flat outcome reward
+6. Stopping 是 cost-sensitive 的：既不总是耗尽 budget，也不总是过早停止
 
-### Phase 3-4 — Integrated self-play
-8. **Adversarial equilibrium** — FI success rate ∈ [0.35, 0.65]
-9. **E2E detection rate** > 0.7
-10. **Asymmetry health** — `asymmetry_gap` 稳定在 [0.2, 0.7]（见 `paper/ideas/triadic-self-play/asymmetry-ladder/v1.md`）
-11. **Verifier-as-judge correlation** — `f1_correlation` > 0.85
-
-### Parallel — 正交研究线（低优先级，主线 Stage 2 末期再启）
-12. **Controller drift detection** — precision/recall ≥ 0.6 on annotated trace（per `.doc/designs/llm-harness.md` P2）
-13. **World Model probe** —— 主线训练后 RCA / FI / Verifier 内部传播预测准确率显著高于 base baseline；如启 standalone WM，则 `propagation_edge_f1` > 0.5
-
-完整指标定义：`.doc/designs/agent-roles-spec.md` §5（Verifier 部分参考其 §5.4 Verification Agent；World Model 详细 reward / 数据见 §5.2）
-
-Secondary criterion: **simplicity** — 同等指标下选代码更少的方案。
-
-<!-- auto-harness:begin -->
 ## Project conventions
 
-- Package manager: `uv` (not pip). Use `uv sync` to install, `uv run` to execute.
-- Static checks: `./scripts/check.sh` (Ruff lint/format + mypy)
-- Smoke test: `./scripts/run_smoke.sh`
-- Python: 3.12, `src/` layout, type hints required
-- AReaL is a submodule; DeepSeek Harness (`deepseek-harness-sdk`) is a pinned SDK package dependency
+- Package manager: `uv` (not pip). `uv sync` to install, `uv run` to execute
+- Static checks: `./scripts/check.sh`；unit tests: `python -m unittest discover -s tests`
+- Smoke: `./scripts/run_sft_smoke.sh`（SFT，单卡）、`./scripts/run_smoke.sh`（RL）
+- Python 3.12, `src/` layout, type hints required；bundle 是无 build 的 ESM
 - Language: discussion in Chinese, code/docs in English
 
 ## Active skills
@@ -105,4 +79,3 @@ Secondary criterion: **simplicity** — 同等指标下选代码更少的方案�
 - long-horizon — autonomous decision-making with escalation ladder
 - plotting — publication-quality experiment figures
 - notify — push iteration reports via email/Feishu/Telegram
-<!-- auto-harness:end -->
