@@ -317,6 +317,22 @@ checkpoint answers in the contract.
 ./scripts/run_sft_smoke.sh total_train_epochs=3 total_train_steps=null
 ```
 
+SFT needs none of the above except the checkout, `uv sync`, `git lfs pull` and
+the base model: it trains on `data/sft/rca_sessions.jsonl`, which already
+carries the teacher's conversations. No corpus, no `RCA_DATASET_ROOT`, no
+harness bundle, no `pnpm`. The 50 episodes expand to 947 rows, the longest
+32051 tokens, which is why `max_tokens_per_mb` is 32768 there too.
+
+```bash
+# Confirms the whole SFT input path on a machine with nothing else on it.
+python -c "
+from areal.utils.hf_utils import load_hf_tokenizer
+from autorl.data.sft import build_sft_dataset_from_manifest
+t = load_hf_tokenizer('Qwen/Qwen3-4B-Thinking-2507')
+d = build_sft_dataset_from_manifest('data/sft/rca_sessions.jsonl', t, max_length=32768)
+print(len(d), max(len(r['input_ids']) for r in d))"
+```
+
 The saver writes an HF model plus tokenizer under
 `<fileroot>/checkpoints/<user>/<experiment_name>/<trial_name>/default/epoch<E>epochstep<S>globalstep<G>`,
 which is what RL then loads:
