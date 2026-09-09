@@ -47,6 +47,18 @@ override-dependencies = [
     "nvidia-cudnn-cu12==9.16.0.29; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
+# PyPI through the Tsinghua mirror. `default = true` replaces upstream PyPI
+# rather than adding to it, so a resolve does not fall back to a host that a
+# checkout behind the firewall reaches at a few hundred KiB/s: the 74MiB
+# `deepseek-harness-runtime-bin` wheel is the one that makes the difference
+# between a sync that finishes and one that is still going ten minutes later.
+# Override for a host that prefers upstream with `UV_INDEX_URL` or
+# `--default-index https://pypi.org/simple`.
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
 [[tool.uv.index]]
 name = "pytorch-cu129"
 url = "https://download.pytorch.org/whl/cu129"
