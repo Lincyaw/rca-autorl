@@ -215,8 +215,15 @@ stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
+  # `online` needs WANDB_API_KEY in the environment; set WANDB_MODE=offline on a
+  # host that cannot reach the service, or =disabled to opt out. The credential
+  # is never written here. The rollout metrics `agent.py` reports arrive under
+  # `rollout/` — `group_score_std` is the one to watch, since a batch of tied
+  # groups has nothing to learn from (method spec §3.2).
   wandb:
-    mode: disabled
+    mode: ${oc.env:WANDB_MODE,online}
+    project: ${oc.env:WANDB_PROJECT,rca-autorl}
+    name: ${trial_name}
   tensorboard:
     path: ${cluster.fileroot}/autorl/tensorboard
 

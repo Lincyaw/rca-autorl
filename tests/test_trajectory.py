@@ -140,7 +140,10 @@ class TrajectoryTest(unittest.TestCase):
     def test_an_error_result_is_marked_so_a_retry_is_visible(self) -> None:
         events = [
             ev("step/start", {"step": 1}),
-            ev("tool/call", {"step": 1, "callId": "c1", "name": "submit_result", "arguments": "{}"}),
+            ev(
+                "tool/call",
+                {"step": 1, "callId": "c1", "name": "submit_result", "arguments": "{}"},
+            ),
             ev(
                 "tool/result",
                 {
@@ -207,7 +210,7 @@ class TrajectoryTest(unittest.TestCase):
         self.assertEqual(len(load_episode(path).steps), 1)
 
     def test_an_episode_that_never_submitted_still_carries_the_truth(self) -> None:
-        """"Found none of these" is the finding; no axes at all would hide it."""
+        """Found-none-of-these is the finding; no axes at all would hide it."""
         path = write(step(1, "c1", tokens=100))
         truth = mock.Mock()
         truth.graph.nodes = [mock.Mock(id="n1", subject="svc-a")]

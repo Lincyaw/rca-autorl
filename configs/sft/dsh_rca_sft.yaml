@@ -86,8 +86,13 @@ stats_logger:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
+  # `online` needs WANDB_API_KEY in the environment; WANDB_MODE=offline for a
+  # host that cannot reach the service, =disabled to opt out. The credential is
+  # never written here.
   wandb:
-    mode: disabled
+    mode: ${oc.env:WANDB_MODE,online}
+    project: ${oc.env:WANDB_PROJECT,rca-autorl}
+    name: ${trial_name}
 
 actor:
   # Pure data parallel over 8 cards. A 4B model shards its weights and

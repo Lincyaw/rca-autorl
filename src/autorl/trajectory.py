@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -299,6 +299,30 @@ def _fill_finish(episode: Episode, events: Sequence[dict[str, Any]]) -> None:
         return
 
 
+def episode_metrics(events: Sequence[dict[str, Any]]) -> dict[str, float]:
+    """What a rollout is worth logging, straight off the events it produced.
+
+    The workflow calls this rather than building an `Episode`, because it has no
+    session file yet and needs no scoring — the reward it already computed is the
+    outcome. Everything here is a fact about how the episode ran: how far it got,
+    how close to the window it came, and whether compaction held.
+    """
+    episode = Episode(session_id="", case="")
+    _fill_steps(episode, events)
+    _fill_compactions(episode, events)
+    _fill_finish(episode, events)
+    tools = episode.tool_counts
+    return {
+        "steps": float(len(episode.steps)),
+        "sql_calls": float(tools.get("sql", 0)),
+        "note_calls": float(tools.get("take_note", 0)),
+        "peak_input_tokens": float(episode.peak_input_tokens),
+        "compactions": float(len(episode.compactions)),
+        "compaction_failures": float(sum(1 for c in episode.compactions if c.error)),
+        "completed": float(episode.finish == "completed"),
+    }
+
+
 def group_stats(episodes: Sequence[Episode]) -> dict[str, Any]:
     """What a set of episodes says about whether RL has anything to optimise.
 
@@ -313,30 +337,42 @@ def group_stats(episodes: Sequence[Episode]) -> dict[str, Any]:
     if not by_case:
         return {"cases": 0, "episodes": 0}
 
-    cases = []
-    for case, group in sorted(by_case.items()):
-        scores = [e.score for e in group]
-        cases.append(
-            {
-                "case": case,
-                "k": len(group),
-                "pass_1": sum(scores) / len(scores),
-                "pass_k": max(scores),
-                "spread": max(scores) - min(scores),
-                "submitted": sum(1 for e in group if e.submission is not None),
-            }
-        )
+    cases = [_case_stats(case, group) for case, group in sorted(by_case.items())]
     total = len(episodes)
-    varied = [c for c in cases if c["spread"] > 0]
+    varied = [c for c in cases if c.spread > 0]
     return {
         "cases": len(cases),
         "episodes": total,
         "submission_rate": sum(1 for e in episodes if e.submission is not None) / total,
-        "pass_1": sum(float(c["pass_1"]) for c in cases) / len(cases),
-        "pass_k": sum(float(c["pass_k"]) for c in cases) / len(cases),
+        "pass_1": sum(c.pass_1 for c in cases) / len(cases),
+        "pass_k": sum(c.pass_k for c in cases) / len(cases),
         "varied_fraction": len(varied) / len(cases),
-        "per_case": sorted(cases, key=lambda c: -float(c["spread"])),
+        "per_case": [asdict(c) for c in sorted(cases, key=lambda c: -c.spread)],
     }
+
+
+@dataclass
+class CaseStats:
+    """One case's K samples, reduced to what decides whether it can teach."""
+
+    case: str
+    k: int
+    pass_1: float
+    pass_k: float
+    spread: float
+    submitted: int
+
+
+def _case_stats(case: str, group: list[Episode]) -> CaseStats:
+    scores = [e.score for e in group]
+    return CaseStats(
+        case=case,
+        k=len(group),
+        pass_1=sum(scores) / len(scores),
+        pass_k=max(scores),
+        spread=max(scores) - min(scores),
+        submitted=sum(1 for e in group if e.submission is not None),
+    )
 
 
 __all__ = [
@@ -344,6 +380,7 @@ __all__ = [
     "Episode",
     "Step",
     "case_of",
+    "episode_metrics",
     "find_sessions",
     "group_stats",
     "load_episode",

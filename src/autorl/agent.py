@@ -14,13 +14,14 @@ from statistics import mean, pstdev
 from typing import Any
 
 from areal.infra import workflow_context
-from areal.utils import logging
+from areal.utils import logging, stats_tracker
 from deepseek_harness import RunResult
 
 from autorl.difficulty import AXES, Answer, element_weights, weighted_score
 from autorl.fork import fork_prefix, steps
 from autorl.harness import model_route, require_bundle, run_episode, scenario_patch
 from autorl.reward import answer_of, step_ids, submitted_result, truth_for_case
+from autorl.trajectory import episode_metrics
 
 logger = logging.getLogger("Dsh-RCA")
 
@@ -108,6 +109,15 @@ class DshWorkflow:
             f"Finished RCA episode: case={data.get('id')} finish_reason={result.finish_reason} "
             f"submitted={submission is not None} outcome={outcome:.3f}"
         )
+        # Everything below is only in the text log otherwise. An episode that
+        # never submitted and one that submitted a wrong graph both score zero,
+        # and the difference — where it stopped, how close to the window it came,
+        # whether compaction held — is what says which of the two to fix.
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            score=outcome,
+            submitted=float(submission is not None),
+            **episode_metrics(result.events),
+        )
         record = Sample(answer, set(step_ids(result.events).values()))
         if self._forks(sample, data):
             await self._fork(
@@ -141,6 +151,16 @@ class DshWorkflow:
         )
         scores = [weighted_score(answer, weights) for answer in answers]
         advantages = centre(scores, self.centring)
+        # The group is visible nowhere else, so this is the only place the
+        # measurement of §3.2 can be taken: a group whose weighted scores are
+        # equal hands every sibling a zero advantage, and a batch of those trains
+        # on nothing. `group_score_std` is that quantity — the first number the
+        # method's design depends on being non-zero.
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            group_score_std=pstdev(scores) if len(scores) > 1 else 0.0,
+            group_score_spread=max(scores) - min(scores),
+            advantage_abs_mean=mean(abs(a) for a in advantages),
+        )
         for result, record, advantage in zip(results, ordered, advantages, strict=True):
             for completion_id in result:
                 result[completion_id].reward = advantage if completion_id in record.own else 0.0

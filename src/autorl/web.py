@@ -73,9 +73,7 @@ def episodes_of(run: str) -> list[Episode]:
 def runs() -> list[dict[str, Any]]:
     """Every Harness home under the runs root, newest first."""
     homes = [d for d in RUNS_ROOT.glob("*") if (d / "sessions").is_dir()]
-    found = [
-        {"run": home.name, "episodes": sum(1 for _ in find_sessions(home))} for home in homes
-    ]
+    found = [{"run": home.name, "episodes": sum(1 for _ in find_sessions(home))} for home in homes]
     return sorted(found, key=lambda r: -int(r["episodes"]))
 
 
