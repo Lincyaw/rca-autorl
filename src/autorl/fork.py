@@ -8,9 +8,9 @@ state is what the bundle keeps in memory: the notebook, and how many results
 the last note has not covered. The snapshot itself is deterministic.
 
 The prefix is written to a file the harness reads through `RCA_FORK_PREFIX`:
-`agent/rca-harness/src/sampling.js` splices the messages in after the child's
-own incident prompt on every request, and `index.js` seeds the notebook and
-the ledger from it.
+`agent/rca-harness/src/index.js` splices the messages in after the child's own
+incident prompt on every request, and seeds the notebook and the ledger from
+it.
 """
 
 from __future__ import annotations
@@ -51,15 +51,20 @@ def fork_prefix(
         if e.get("type") in SURFACE and not (e["type"] == "user/message" and is_incident(e))
     ]
 
-    notes: list[str] = list(base["notes"]) if base else []
+    notes: list[dict[str, str]] = list(base["notes"]) if base else []
     unnoted = int(base["unnoted"]) if base else 0
     for name, arguments in accepted_calls(before):
         # A `take_note` with no content is a read, not a write (`notebook.js`):
-        # appending it would put a blank note in the child's notebook and shift
-        # every later note id away from the ids the spliced history cites, and
-        # clearing the debt would hand the child a free pass through `noteLimit`.
+        # appending it would put a blank note in the child's notebook under a
+        # name derived from nothing, and clearing the debt would hand the child a
+        # free pass through `noteLimit`.
         if name == "take_note" and str(arguments.get("content", "")).strip():
-            notes.append(str(arguments["content"]).strip())
+            notes.append(
+                {
+                    "id": str(arguments.get("id", "")).strip(),
+                    "content": str(arguments["content"]).strip(),
+                }
+            )
             unnoted = 0
         elif name == "sql":
             unnoted += 1

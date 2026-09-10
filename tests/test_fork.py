@@ -73,7 +73,7 @@ def episode() -> list[dict[str, Any]]:
     events += [
         ev("step/start", {"step": 3}, None),
         assistant(3, "a3"),
-        *call(3, "c3", "take_note", content="geo is down"),
+        *call(3, "c3", "take_note", id="geo-is-down", content="geo is down"),
     ]
     events += [
         ev("step/start", {"step": 4}, None),
@@ -93,16 +93,16 @@ class ForkPrefixTest(unittest.TestCase):
     def test_notes_and_debt_follow_the_accepted_calls(self) -> None:
         self.assertEqual(fork_prefix(episode(), 3)["unnoted"], 2)
         at_four = fork_prefix(episode(), 4)
-        self.assertEqual(at_four["notes"], ["geo is down"])
+        self.assertEqual(at_four["notes"], [{"id": "geo-is-down", "content": "geo is down"}])
         self.assertEqual(at_four["unnoted"], 0)
         self.assertEqual(fork_prefix(episode(), 5)["unnoted"], 1)
 
     def test_a_notebook_read_is_neither_a_note_nor_a_payment(self) -> None:
         """`take_note` with no content reads the notebook (`notebook.js`).
 
-        Counting it would put a blank note in the child's notebook, shifting
-        every later note id away from the ids the spliced history cites, and
-        clearing the debt would let the child past `noteLimit` for free.
+        Counting it would put a blank note in the child's notebook, under a
+        name derived from nothing, and clearing the debt would let the child
+        past `noteLimit` for free.
         """
         events = episode()
         events += [
@@ -112,7 +112,7 @@ class ForkPrefixTest(unittest.TestCase):
         ]
         events += [ev("step/start", {"step": 7}, None)]
         at_seven = fork_prefix(events, 7)
-        self.assertEqual(at_seven["notes"], ["geo is down"])
+        self.assertEqual(at_seven["notes"], [{"id": "geo-is-down", "content": "geo is down"}])
         # Step 4's query is still unpaid; the read did not settle it.
         self.assertEqual(at_seven["unnoted"], 1)
 

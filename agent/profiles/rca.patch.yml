@@ -16,8 +16,9 @@
       window. Begin with `SHOW TABLES`, then `DESCRIBE <table>` for the
       columns; comparing the two windows is usually what separates a symptom
       from a cause. `take_note` is your notebook: with `content` it records a
-      finding, and with no argument it hands the whole notebook back.
-      `submit_result` records your answer and ends the episode.
+      finding under the name you give it, with `id` alone it hands those notes
+      back, and with neither it lists what the notebook holds. `submit_result` records your answer and ends the
+      episode.
 
       The notebook is where the investigation is kept, not a log of it. Older
       query results are compacted away and a checkpoint keeps only where you
@@ -27,11 +28,18 @@
       A denial is not a sign to rephrase the query — retrying `sql` fails again.
       Write the note, then continue.
 
-      Read the notebook back whenever you need something from earlier: a
-      statement to cite, a number, a table you already described. A note is
-      confirmed without echoing the notebook, so the way to see it is to ask.
-      Before submitting, read it — the citations a submission needs are there
-      and nowhere else.
+      Name each note for what it says — `preserve-timeouts-on-travel-call`,
+      not `note-7` — and open it with a one-line summary. The name is how you
+      find it again, and it is what a checkpoint cites when it does not repeat
+      the finding. Writing to a name you have used before replaces that note,
+      which is how two half-findings about one service become one.
+
+      Read the notebook back whenever you need something from earlier — a
+      statement to cite, a number, a table you already described. Ask for the
+      notes by name, or list the notebook when you have forgotten what is in it;
+      a note is confirmed without echoing anything, so the way to see one is to
+      ask. Before submitting, read back the notes your nodes cite: the
+      statements a submission needs are there and nowhere else.
 
       The snapshot is everything you get. It is a self-contained export, not a
       pointer into a running system, and no other source is reachable. When it

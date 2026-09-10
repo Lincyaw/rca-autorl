@@ -170,7 +170,7 @@ class BundleConventionTest(unittest.TestCase):
     def test_model_visible_prose_lives_in_one_file(self) -> None:
         """A sentence for the model, anywhere but `prompts.js`, is unscannable.
 
-        A note reminder sat in `note-policy.js` and the leak scan above could
+        A note reminder sat in the note policy and the leak scan above could
         not see it. Long literals elsewhere are the signature of that mistake.
         """
         for path in sorted(BUNDLE_SRC.glob("*.js")):

@@ -1,6 +1,6 @@
 import { ToolResultPruner } from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import { trace } from './debug.js'
-import { unnotedCount } from './note-ledger.js'
+import { unnotedCount } from './notebook.js'
 import { NOTE_TOOL, SQL_TOOL } from './prompts.js'
 
 /**
@@ -8,9 +8,8 @@ import { NOTE_TOOL, SQL_TOOL } from './prompts.js'
  *
  * The shipped pruner trims every over-budget tool result whenever compaction
  * pressure qualifies. It cannot know which results the investigation has
- * already written down, so a result can be replaced by a head, a marker, and a
- * `(saved to qN.tsv)` tail the model has no tool to read back — the finding is
- * gone before it was ever recorded.
+ * already written down, so a finding can be replaced by a head, a marker and a
+ * `(saved to qN.tsv)` tail before it was ever recorded.
  *
  * This subclass protects two things. The `sql` results that arrived since the
  * last note stay whole — bounded by `noteEvery` thanks to the note gate, so
@@ -19,7 +18,7 @@ import { NOTE_TOOL, SQL_TOOL } from './prompts.js'
  * and leaves the evidence in the notebook.
  *
  * The window counts `sql` results only, because the ledger does: `recordUnnoted`
- * fires for `sql` and nothing else (`note-policy.js`). Taking the last N results
+ * fires for `sql` and nothing else (`notebook.js`). Taking the last N results
  * of *any* kind was the same set only while every `take_note` cleared the debt,
  * so that a note's own result could never sit inside the window. A contentless
  * `take_note` is a read that deliberately leaves the debt standing, and counting
@@ -33,9 +32,8 @@ import { NOTE_TOOL, SQL_TOOL } from './prompts.js'
  *
  * The protected set is module state rather than an instance field because a
  * mounted service reaches its own methods through a proxy, and a `#private`
- * field written through one throws `Cannot write private member`. One pass is
- * synchronous from `pruneSession` through every `pruneContent` call, so a
- * module-level set is exactly as scoped as an instance field would have been.
+ * field written through one throws. One pass is synchronous from `pruneSession`
+ * through every `pruneContent` call, so a module-level set is exactly as scoped.
  */
 let protectedContent = new WeakSet()
 

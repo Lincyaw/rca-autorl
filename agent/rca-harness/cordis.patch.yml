@@ -15,6 +15,25 @@
 - id: str-replace-editor
   disabled: true
 
+# `defaultContextWindow` applies only to a model id the catalog does not list,
+# and the shipped catalog lists the DeepSeek ids at 1M — so on this route the
+# window an episode is compacted against would be the catalog's, not the served
+# one, and a collection run would compact where a rollout does not. The catalog
+# is declared here instead, the way `agent/profiles/openai-gateway.patch.yml`
+# declares it for the gateway route. `apiKeyEnv` and `streamIdleTimeoutMs` are
+# `sdk-minimal`'s own values, restated because a patch replaces a row's config
+# whole; the timeout is what lets one episode outlive a long request.
+- id: llm-deepseek
+  config:
+    apiKeyEnv: DEEPSEEK_API_KEY
+    defaultContextWindow: !!js Number(process.env.DSH_CONTEXT_WINDOW ?? 1000000)
+    streamIdleTimeoutMs: 172800000
+    models:
+      - id: deepseek-v4-pro
+        contextWindow: !!js Number(process.env.DSH_CONTEXT_WINDOW ?? 1000000)
+      - id: deepseek-v4-flash
+        contextWindow: !!js Number(process.env.DSH_CONTEXT_WINDOW ?? 1000000)
+
 # `sdk-minimal` mounts no context management at all: no token meter, no
 # compaction, so a long investigation runs until the serving window rejects the
 # request. These are the base bundle's own rows, added rather than inherited, so
@@ -22,9 +41,10 @@
 # what this episode can do.
 #
 # `compaction-basic` compacts at `thresholdRatio` of the MODEL's context window,
-# which `llm-deepseek` reads from $DSH_CONTEXT_WINDOW and otherwise assumes is
-# 1M. DshWorkflow sets that variable from AReaL's `sglang.context_length`; leave
-# it unset only when the served window really is the harness default.
+# so the episode's whole context policy is sized against whatever the adapter
+# says that window is. DshWorkflow sets $DSH_CONTEXT_WINDOW from AReaL's
+# `sglang.context_length`; leave it unset only when the served window really is
+# the harness default.
 - insert:
     - id: token-meter
       name: '@deepseek-ai/dsh-token-meter'
@@ -43,24 +63,19 @@
         # (12288) = 31949, inside 32768 with 819 to spare. Raising either of the
         # two past that is a request sglang rejects.
         thresholdRatio: 0.6
-        # Output cap for the checkpoint request, reasoning included. The shipped
-        # 8192 is not enough for a thinking model to reason and then write this
-        # template: across the first ten collected episodes the successful
-        # checkpoints took a median 6535 output tokens and 11 of 46 landed
-        # within a tenth of the cap, while 23 of 34 failures were
-        # `finish.kind === 'max-tokens'`. A truncated checkpoint is discarded
-        # whole, so the episode pays a full summarizer request, frees nothing,
-        # and trips the same threshold on its next step — 45% of all compaction
-        # time went to attempts that landed nothing.
+        # Output cap for the checkpoint request, reasoning included. The
+        # checkpoint text the template asks for is about a page; what fills this
+        # budget is the thinking in front of it, which is why the request also
+        # asks for low reasoning effort where the route offers it
+        # (`compaction.js`). The cap is the backstop for a route that does not.
         #
-        # The ceiling is the serving window, not the model: the request replays
-        # the shadowed region (14.3k tokens at its largest here) before the
-        # instruction, so 14.3k + 16384 = 30.7k stays inside sglang's 32768 at
-        # rollout time. Raising this does not fix the other failure mode — a
-        # summary the engine refuses for not being smaller than what it
-        # replaces — which is the template asking for every SQL statement
-        # verbatim and so growing with the episode.
-        maxTokens: 16384
+        # The ceiling is the serving window: the request replays the shadowed
+        # region before the instruction, and system prompt and tool schemas sit
+        # in front of both, so at the largest region seen here that is about
+        # 14k + 12288, inside sglang's 32768. A truncated checkpoint is
+        # discarded whole, so it costs a full request and frees nothing; it is
+        # retried once and then the episode stops.
+        maxTokens: 12288
     # Prunes old tool results before the conversation compactor runs.
     # Threshold below the sql tool's maxChars (4000), so every non-trivial sql
     # result is pruned on the next compaction pass. The model sees the full

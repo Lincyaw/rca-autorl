@@ -4,188 +4,167 @@ DeepSeek Harness (`dsh`) owns the agent loop. This directory owns what an RCA
 episode needs on top of it: the action space, the answer channel, and context
 management.
 
-```text
-agent/
-  rca-harness/       the bundle @rca-autorl/dsh-rca-harness
-    cordis.patch.yml   bundle layer: disable the shell and editor, mount our rows
-    src/index.js       plugin entry: config validation, episode state
-    src/sql-tool.js    the sql tool, the whole evidence surface
-    src/notebook.js    take_note
-    src/note-policy.js the note reminder and its denial backstop
-    src/note-ledger.js unnoted-result count shared by policy and pruner
-    src/submit-result.js  the terminal submit_result tool
-    src/contract.js    the answer schema and the rules JSON Schema cannot state
-    src/vocabulary.js  GENERATED from configs/fpg/microservices.toml
-    src/compaction.js  compaction-basic with the RCA checkpoint template
-    src/pruner.js      note-aware tool-result pruner
-    src/sampling.js    the trainer's temperature, and the route a forked episode continues on
-    src/prompts.js     every model-facing string
-    src/debug.js       env-gated trace
-  profiles/
-    rca.patch.yml            the RCA scenario layer: the persona
-    openai-gateway.patch.yml an OpenAI-compatible gateway as a model route
+## One episode, end to end
+
+The numbered markers in the diagram are the phases, and the sections below
+carry the same numbers. The round badges are per-message, for pointing at one
+arrow.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant T as autorl
+    participant L as dsh loop
+    participant C as meter + compaction
+    participant P as pruner
+    participant H as rca-harness
+    participant M as model
+    participant D as disk
+
+    Note over T,H: 1 · compose
+    T->>L: run_episode(incident, snapshot, route, env)
+    L->>H: apply(config)
+    H->>H: episode state: snapshot, resultRoot,<br/>notebook seed, unnoted seed
+    H-->>L: sql / take_note / submit_result,<br/>note policy, temperature, fork splice
+    Note over L: surface = system(persona + tool schemas)<br/>+ user(incident)
+
+    loop until submit_result, or no tool call, or a request error
+        Note over L,C: 2 · context management,<br/>before the request and only here
+        L->>C: agent/pre-step
+        C->>C: measure the whole surface
+        alt under thresholdRatio x window
+            C-->>L: nothing to do
+        else over
+            Note over C,P: 2a · the model-free pass goes first
+            C->>P: pruneSession()
+            P->>P: shrink results already covered by a note,<br/>leave the unnoted tail whole
+            P-->>C: measure again
+            alt now under
+                C-->>L: no summary written
+            else still over
+                Note over C,M: 2b · one summarizer request
+                C->>C: region = head of the surface up to<br/>the cut that keeps a retainRatio tail
+                C->>M: region + checkpoint instruction<br/>(session system prompt and tools reused)
+                M-->>C: checkpoint
+                C->>C: prepend the incident and the note index,<br/>both verbatim
+                C->>C: refuse it unless smaller than the region
+                C-->>L: surface = checkpoint + retained tail
+            end
+            opt the pass failed
+                Note over C,M: one retry, told why the first was refused
+                C-->>L: still failing: reject the step,<br/>the turn ends as blocked
+            end
+        end
+
+        Note over L,H: 3 · one step, one or more tool calls
+        L->>M: request (temperature added on agent/request,<br/>fork history spliced on llm/stream)
+        M-->>L: reasoning + one or more tool calls
+        L->>D: assistant/message with usage and response id
+
+        L->>H: tools/pre-execute (once per call)
+        alt sql with unnoted >= noteLimit
+            H-->>L: deny, saying that rephrasing will not help
+        else allowed
+            alt 3a · sql
+                H->>H: DuckDB over the snapshot,<br/>capped by rows, chars and cell width
+                H->>D: whole page to qN.tsv
+                H-->>L: status line + TSV + (saved to qN.tsv)
+                H->>H: unnoted += 1
+            else 3b · take_note with content
+                H->>H: write under the model's name,<br/>replacing that name if it exists
+                H->>D: notes.md
+                H-->>L: name and count, nothing echoed
+                H->>H: unnoted = 0
+            else 3c · take_note with id, or neither
+                H-->>L: those notes, or the index
+                Note over H: a read settles no debt
+            else 3d · submit_result
+                H->>H: contract.js beyond the JSON Schema
+                alt rejected
+                    H-->>L: error result, the model retries in this turn
+                else accepted
+                    H->>D: the answer, in the session log
+                    H-->>L: concludeTurn(), later calls denied
+                end
+            end
+        end
+
+        L->>H: tools/post-execute
+        opt sql at noteEvery, and again on the last query before noteLimit
+            H-->>L: note reminder folded onto the result
+        end
+        L->>D: tool/result
+    end
+
+    Note over L,T: 4 · the episode ends
+    L->>D: turn/end with the reason
+    T->>D: read the session log back
+    T->>T: submitted answer -> fpg -> three-axis score
 ```
 
-The model sees exactly three tools: `sql`, `take_note`, and `submit_result`.
+**1 · Compose.** `autorl.harness` picks the route and the environment the bundle
+reads, and starts a runtime on `sdk-minimal` plus two patch layers: this
+bundle's, which disables the shell and the editor and mounts the
+context-management rows, and the scenario's, which carries the persona. `apply`
+builds the episode state and registers everything the model can do. Nothing else
+is reachable: the snapshot's answer files are not tables and DuckDB's own
+readers are switched off.
 
-## Why a bundle
+**2 · Context management runs before the request, not after the result.** The
+meter prices the whole surface — system prompt, tool schemas, every message.
+Under the threshold nothing happens, which is the path most steps take.
 
-The composed tree starts from the shipped `sdk-minimal` profile, the only one
-that accepts an arbitrary model id, which is what the rollout proxy serves.
-`sdk-minimal` is a coding agent: bash, `str_replace_editor`, no context
-management. A bundle carries its own patch layer, so `dsh plugin add` mounts
-these rows into every session the profile starts; patches alone cannot add
-behavior no shipped package implements.
+**2a ·** Over it, the model-free pruner goes first and the surface is measured
+again. An episode whose findings are in the notebook is usually back under the
+threshold here, having spent no tokens.
 
-## The action space is one SQL tool
+**2b ·** Only when pruning is not enough is a checkpoint written, and that costs
+a full model request. Two things are pinned to it rather than written by it. The
+first is the incident: the region being replaced contains the episode's own
+question, so the engine prepends that question verbatim and the template asks
+for the state of the investigation only — a paraphrased task drifts pass after
+pass, and the task is the one text that must not. The second is the notebook's
+index, because a checkpoint cites the notes its claims rest on and every other
+note would otherwise be unreachable by a model that cannot see it exists. The
+index is a list of names with a cap, since it is the one part of a checkpoint
+that grows with the episode. What the template does ask
+for is where the investigation stands rather than a record of what it did — a record grows with the episode until the
+checkpoint is the size of the region it replaces and a pass frees nothing. The
+region is head-anchored: it starts at the first surface node, so the previous
+checkpoint is always inside it and the new one replaces it rather than following
+it. What survives verbatim is the tail, sized by `retainRatio`, cut back to
+avoid splitting a tool call from its result.
 
-A datapack is telemetry in Parquet, so the action space is a query interface.
-`sql` opens one in-process DuckDB per episode, materializes every `*.parquet`
-in the snapshot as a table named after the file stem, and answers statements
-against it. Schema discovery is SQL too (`SHOW TABLES`, `DESCRIBE`).
+The request asks for low reasoning effort where the routed model offers it: the
+checkpoint is a template fill, and it is the thinking in front of it that fills
+the output budget. Asking for an effort a route does not declare is a hard
+error, so the effort is set only after the adapter says it exists.
 
-Results are bounded by `maxRows`, `maxChars`, and `maxCellChars`, because the
-context window is the resource an episode spends. The status line reports how
-many rows matched and `offset` pages through them. The model sees TSV; the
-canonical value stays structured JSON for anything reading the log.
+A failed pass — a checkpoint refused for not being smaller than its region, one
+the cap truncated, an endpoint error — leaves the surface untouched, so it is
+retried once, and a checkpoint that was refused for its size is told so. If the
+retry fails too the episode stops: the next step is rejected and the turn ends
+as `blocked`. Continuing instead means sending a prompt the window cannot hold,
+which reaches the endpoint as a bare error several steps later and costs the
+whole episode anyway.
 
-Dropping the shell is the design, not hardening:
+**3 · One step is one model turn.** The loop sends the request and the model
+reasons and calls a tool — usually one, sometimes several at once, as when it
+describes every table in a single turn. Each call goes through the harness
+twice: on `tools/pre-execute`, where the note gate may deny `sql`, and on
+`tools/post-execute`, where a reminder rides the result without costing a turn.
+A parallel turn therefore spends the note budget several times over. The
+reminder is sent twice in a debt cycle, on reaching `noteEvery` and on the last
+query before the gate closes: it is a message the pruner cannot reach, so one
+per query would spend more context than the results it protects. A `sql` result reaches the
+model as TSV and reaches the disk whole (3a); a note write confirms with a name
+and a count (3b); a note read hands back the notes asked for, or the index (3c).
+Only a write settles the debt the pruner reads — clearing it on a read would
+make an empty `take_note` a way around `noteLimit`. A submission is checked
+twice, by the JSON Schema and then by `contract.js`, and a rejection is an
+ordinary error the model can answer in the same turn (3d).
 
-- **The answer is unreachable.** `injection.json`, `causal_graph.json`,
-  `result.json` sit beside the evidence. They are not registered as tables, and
-  `enable_external_access` is switched off once the tables exist, so
-  `read_parquet` / `read_json_auto` / `read_csv` answer `Permission Error`.
-  `tests/test_no_answer_leak.py` guards the other channel: no model-visible
-  string in `prompts.js` or the persona may describe how the corpus was made.
-- **Episodes stay comparable.** Every episode moves through the same interface,
-  so turn counts mean the same thing across episodes.
-
-## The notebook and the policy that makes it happen
-
-`take_note` appends to an in-memory notebook and returns the whole notebook in
-its result, so the model's findings stay visible after older results are
-pruned. The notebook is per episode.
-
-An advisory instruction alone does not get notes written, so the policy applies
-two pressures. Past `noteEvery` unnoted queries the `sql` result carries a
-reminder, at no turn cost. Past `noteLimit` the next `sql` is denied until a
-note lands; the denial text says outright that rephrasing fails. `submit_result`
-is never gated. The limit exists because the note-aware pruner leaves unnoted
-results whole, so an episode that never notes has an unprunable tail.
-
-## The answer channel
-
-`submit_result` is the only thing the trainer reads. Its parameter schema is
-`fpg.ModelRCAOutput` bound to `configs/fpg/microservices.toml`: nodes are
-time-anchored `(subject, predicate, window, evidence)` statements, edges carry
-existence and direction, `root_causes` are stated. The ground truth is annotated
-in the same schema and vocabulary.
-
-Enforcement is split by what each half can express. The registry validates
-arguments against the JSON Schema before `execute` runs, which covers types,
-required keys, and the two closed vocabularies that fit as `enum`.
-`contract.js` hand-checks the rest: entity-reference format, ISO 8601 timestamps
-with an offset, `start` not after `end`, evidence unless the node is a
-hypothesis, unique ids, no self-loops, every edge endpoint and root cause
-resolving to a node. A violation is an ordinary error result and the model
-retries in the same turn.
-
-Neither side is hand-written twice: `src/vocabulary.js` is generated by
-`python -m autorl.fpg`, and `tests/test_submit_result_contract.py` runs the same
-fixtures through the Python parser and `contract.js` under Node.
-
-The call is terminal once it executes: `exec.concludeTurn()` stops the loop and
-a `ctx.tools.guard()` denies every later call. Schema validation runs before
-`execute`, so a rejected call ends nothing and the log can hold several
-`tool/call` events for one episode. `autorl.agent.submitted_result` pairs each
-call with its `tool/result` by id and reads the accepted one.
-
-## Context management
-
-`sdk-minimal` mounts none. The bundle patch adds `token-meter`, a
-`compaction-basic` subclass, and a tool-result pruner, as an explicit
-allowlist.
-
-`compaction-basic` compacts at `thresholdRatio` of the model's context window,
-which the adapter reads from `$DSH_CONTEXT_WINDOW`; `DshWorkflow` sets that
-from AReaL's `sglang.context_length`. The pruner threshold sits below the `sql`
-tool's `maxChars`, so a past result shrinks to a head plus its
-`(saved to qN.tsv)` tail on the next compaction pass while the notebook keeps
-the finding. The saved TSV lives in the Harness home, never in the shared
-snapshot.
-
-The checkpoint template is ours because the shipped one is written for a
-coding assistant (Files and Code, Errors and Fixes). `BasicCompactionEngine`
-documents `summarize()` as the override point, so `src/compaction.js` replaces
-only the instruction: keep verbatim the SQL that grounds a finding, one line
-for every other query, exact service and column names, and no promotion of a
-hypothesis to a finding across a checkpoint. `maxTokens` and `thresholdRatio`
-are sized in `cordis.patch.yml` against the serving window, with the
-arithmetic inline.
-
-AReaL keys its reward cache by the provider's response id. On the
-`llm-pi-ai` route that id rides in the message's replay state, which the loop
-logs with every `assistant/message`, so `autorl.reward.step_ids` reads it
-straight off the session log.
-
-## Sampling temperature
-
-The harness builds each model call from `AgentOptions`, which has no sampling
-field, so a request leaves without a temperature and the endpoint's default
-applies. The `agent/request` waterfall yields the call config before the
-runtime prepares the call, and `sampling.js` adds the temperature there, on
-whatever route the launch uses. The number is `RCA_TEMPERATURE` in the
-launch's environment: `gconfig.temperature` on the rollout path,
-`--temperature` on the collector, zero for a greedy baseline, unset for the
-endpoint's default.
-
-## Forking
-
-The harness has no session resume, so a fork (spec §4) rebuilds the state
-instead. `autorl.fork.fork_prefix` folds the parent's session log up to the
-fork step the way the harness folds it, compaction included, and writes the
-messages the model saw, the notes it took, and how many results its last note
-had not covered. The path arrives as `RCA_FORK_PREFIX`. The `agent/request`
-waterfall may not touch messages, but `llm/stream` may answer the loop's
-request itself, so `sampling.js` answers it with a second call on the same
-route, the parent's messages spliced in after the child's incident prompt;
-`index.js` seeds the notebook, and the ledger starts at the parent's debt.
-DuckDB is rebuilt from the snapshot as always. The runtime's own listeners see
-both calls; only the loop's request carries the loop marker, so the rewrite
-happens once.
-
-The child's own session log holds only what the child did, which is what the
-reward mapping reads. Two things the child does not inherit: the parent's
-saved TSVs, which no tool can read back anyway, and the parent's context
-pressure, since the token meter and the pruner see the child's surface alone.
-
-## Mechanism here, scenario there
-
-`cordis.patch.yml` mounts the rows with their default config.
-`profiles/rca.patch.yml` is the per-launch layer `DshWorkflow` passes and owns
-the persona. A patch replaces a row's whole config, so a scenario layer that
-changes one field restates the rest. The persona is part of the mechanism: it
-states that the snapshot is a self-contained export and that a gap in it is a
-hypothesis to record, and it states the note rule up front.
-
-## Install and iterate
-
-```bash
-python -m autorl.fpg                                 # after editing the vocabulary profile
-python -m autorl.harness .runs/dsh-home              # first install
-python -m autorl.harness .runs/dsh-home --reinstall  # after editing the bundle
-```
-
-`dsh plugin add` uses `file:`, which copies the bundle into the profile package
-tree. `add` on an unchanged `file:` spec is a pnpm no-op, so an edit reaches a
-session only after `--reinstall`, which removes the package first.
-
-The bundle is plain ESM with no build step. Verify a composition with
-`dsh --profile sdk-minimal --patch agent/profiles/rca.patch.yml --dump-config`,
-then one real episode: a row whose `inject` is unsatisfied stays dormant
-without an error.
-
-Set `RCA_HARNESS_LOG` to a file path and the bundle appends one JSON line per
-decision: row config at mount, every pressure check, every prune pass, every
-checkpoint. It is inert when unset. The engine swallows compaction failures, so
-this trace is the only place a broken compaction shows up.
+**4 · The episode ends** when `submit_result` is accepted, when the model stops
+calling tools, or when a request fails. The trainer reads the session log back:
+the accepted submission, parsed by `fpg`, scored against the annotation on
+roots, subjects and edges.
