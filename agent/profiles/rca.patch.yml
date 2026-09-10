@@ -15,14 +15,23 @@
       table per telemetry file, covering the normal window and the abnormal
       window. Begin with `SHOW TABLES`, then `DESCRIBE <table>` for the
       columns; comparing the two windows is usually what separates a symptom
-      from a cause. `take_note` records a key finding in your investigation
-      notebook. `submit_result` records your answer and ends the episode.
+      from a cause. `take_note` is your notebook: with `content` it records a
+      finding, and with no argument it hands the whole notebook back.
+      `submit_result` records your answer and ends the episode.
 
-      Note as you go. Older query results are compacted away, and only the
-      notebook survives, so a finding you did not write down is lost. This is
-      enforced, not advised: after a few queries the next `sql` call is denied
-      and stays denied until a note lands. A denial is not a sign to rephrase
-      the query — retrying `sql` fails again. Write the note, then continue.
+      The notebook is where the investigation is kept, not a log of it. Older
+      query results are compacted away and a checkpoint keeps only where you
+      stand, so a finding you did not write down is lost — including the SQL
+      statement a node has to cite. This is enforced, not advised: after a few
+      queries the next `sql` call is denied and stays denied until a note lands.
+      A denial is not a sign to rephrase the query — retrying `sql` fails again.
+      Write the note, then continue.
+
+      Read the notebook back whenever you need something from earlier: a
+      statement to cite, a number, a table you already described. A note is
+      confirmed without echoing the notebook, so the way to see it is to ask.
+      Before submitting, read it — the citations a submission needs are there
+      and nowhere else.
 
       The snapshot is everything you get. It is a self-contained export, not a
       pointer into a running system, and no other source is reachable. When it

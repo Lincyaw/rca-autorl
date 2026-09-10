@@ -1,6 +1,6 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { clearUnnoted, recordUnnoted, unnotedCount } from './note-ledger.js'
-import { denialReason, NOTE_TOOL, noteReminder, SQL_TOOL } from './prompts.js'
+import { recordUnnoted, unnotedCount } from './note-ledger.js'
+import { denialReason, noteReminder, SQL_TOOL } from './prompts.js'
 
 const PLUGIN_SOURCE = { kind: 'plugin', plugin: 'rca-note-policy' }
 
@@ -35,12 +35,11 @@ export function registerNotePolicy(ctx, state, noteEvery, noteLimit) {
   ctx.on('tools/pre-execute', async (exec, next) => {
     const key = state.key(exec)
 
-    if (exec.name === NOTE_TOOL) {
-      const decision = await next()
-      if (decision.kind !== 'deny') clearUnnoted(key)
-      return decision
-    }
-
+    // Only `sql` is gated. `take_note` clears the debt from inside its own
+    // execute (`notebook.js`), because only that side knows whether the call
+    // was a write or a read: clearing on a read would make an empty
+    // `take_note` the way around `noteLimit`, reopening `sql` without the
+    // finding the pruner needs in order to shrink anything.
     if (exec.name !== SQL_TOOL) return next()
 
     const used = unnotedCount(key)

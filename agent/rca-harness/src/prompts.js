@@ -36,7 +36,8 @@ export const sqlDescription = (maxRows, maxChars) =>
   + `A result is capped at ${maxRows} rows and about ${maxChars} characters; the status line `
   + 'reports how many rows matched, and `offset` pages through them. Prefer aggregating over '
   + `paging. After reviewing the result, call \`${NOTE_TOOL}\` to record your finding — this also `
-  + 'compacts the sql result out of context, keeping only your note and a file reference.'
+  + 'compacts the sql result out of context, leaving a file reference. The finding then lives in '
+  + 'the notebook, which you can read back at any time.'
 
 export const SQL_STATEMENT_DESCRIPTION = 'One DuckDB SQL statement.'
 export const SQL_OFFSET_DESCRIPTION =
@@ -44,15 +45,18 @@ export const SQL_OFFSET_DESCRIPTION =
 
 /** The `take_note` tool. */
 export const NOTE_DESCRIPTION =
-  'Record a key finding in the investigation notebook. The notebook persists '
-  + 'across context compaction. Each call returns the full notebook so your '
-  + 'accumulated findings stay visible. Call this after each sql query to '
-  + 'preserve what you learned — older sql results are automatically compacted '
-  + 'to file references between steps, so anything not noted may be lost from '
-  + 'context.'
+  'The investigation notebook: your external store, which survives context '
+  + 'compaction. With `content`, records a finding. WITHOUT `content`, returns '
+  + 'the whole notebook — call it that way whenever you need a statement, a '
+  + 'number or a finding from earlier in the investigation. Write after each sql '
+  + 'query: older results are compacted to file references between steps and a '
+  + 'checkpoint keeps conclusions rather than evidence, so the notebook is where '
+  + 'a finding survives. A write confirms without echoing the notebook, so '
+  + 'reading it back is a deliberate call.'
 
 export const NOTE_CONTENT_DESCRIPTION =
-  'The finding to record: what you observed, the SQL that showed it, and what it implies.'
+  'The finding to record: what you observed, the SQL that showed it, and what it implies. '
+  + 'Omit to read the notebook instead of writing to it.'
 
 /** What the model is told when it has queried without noting. */
 export const noteReminder = (used, noteLimit) =>
@@ -179,22 +183,35 @@ export const nextPageHint = last =>
  * far, and which hypotheses are still open.
  *
  * This template keeps exactly those, and keeps them in the vocabulary the
- * submission needs, so a compacted episode can still produce a graph whose
- * nodes cite the statements that grounded them.
+ * submission needs, so a compacted episode can still produce a graph.
  *
- * Verbatim SQL is scoped to the statements that ground something. An earlier
- * revision asked for every query verbatim, on the reasoning that a re-run query
- * is a wasted step; across the first ten collected episodes that meant carrying
- * 875 statements to cite 148, and the surplus grew with episode length — 217
- * queries and 9 citations on the longest. A checkpoint that grows with the span
- * it replaces is one that eventually cannot replace it: those episodes spent
- * 45% of their compaction time on summaries discarded for overrunning the token
- * cap or for not being smaller than the region they shadowed. Knowing that
- * ground was covered is what prevents the re-run; the statement text is only
- * needed by the node that cites it.
+ * **No SQL text at all, and no evidence.** Twice now this template has carried
+ * statements and twice the checkpoint outgrew the region it replaces. First it
+ * asked for every query verbatim: across ten collected episodes that carried
+ * 875 statements to cite 148, and the surplus grew with episode length. Scoping
+ * it to the statements that ground a finding did not fix the shape, because that
+ * set is monotone too — a finding is never un-established, so its statement is
+ * never droppable. Measured over one episode's three passes, the sections that
+ * accumulate by definition grew the summary from 10123 to 21886 characters
+ * (Evidence Statements +5544, Ground Already Covered +3354, Established
+ * Findings +1637) while Incident and Snapshot Schema did not move at all. The
+ * region each pass could replace stayed at 9-12k tokens, so the net saving fell
+ * from 5587 tokens to 2312, context settled at 20416 above the 19661 threshold
+ * it had just compacted below, and the next step tripped compaction again —
+ * MAX_TOKENS, then a 400, then the episode was over.
+ *
+ * The fix is not a smaller budget for evidence but a different home for it. The
+ * notebook already persists across passes; what it lacked was a way to read it
+ * back, so the checkpoint was evidence's only route out of a compaction pass.
+ * With `take_note` readable (`notebook.js`), the checkpoint states where the
+ * investigation stands and the notebook holds what it found — and the parts of
+ * a checkpoint that are bounded by the incident rather than by the episode
+ * (Incident, Snapshot Schema, the open questions) are the parts that stay.
  */
 export const RCA_INSTRUCTION = [
-  'You are now acting as a compaction engine for a root-cause analysis agent. Condense the investigation ABOVE into a structured checkpoint that lets another model resume it with no loss of evidence.',
+  'You are now acting as a compaction engine for a root-cause analysis agent. Condense the investigation ABOVE into a structured checkpoint that lets another model resume it.',
+  '',
+  'The checkpoint carries the state of the investigation, NOT its evidence. The evidence is in the notebook, which survives compaction and which the resuming model reads by calling `take_note` with no argument. Do not copy findings, statements or numbers here that a notebook read would return.',
   '',
   'Output EXACTLY the Markdown structure below: keep every section, in order. Use terse bullets, not prose paragraphs. Write "(none)" for an empty section — never drop a section.',
   '',
@@ -204,17 +221,14 @@ export const RCA_INSTRUCTION = [
   '## Snapshot Schema',
   '- [tables seen so far and the columns that mattered, so they are not re-discovered]',
   '',
-  '## Evidence Statements',
-  '- [only the SQL that grounds a finding or an edge below: the statement verbatim and complete, and in one clause what its result showed]',
-  '',
   '## Ground Already Covered',
-  '- [what else was queried and what it showed or excluded — one line each, no SQL text]',
+  '- [what has been queried and what it showed or excluded — one line each, no SQL text]',
   '',
   '## Established Findings',
-  '- [what the evidence settles, each tied to the statement above that settles it]',
+  '- [what the evidence settles, one line each — the claim, not the data behind it]',
   '',
   '## Causal Chain So Far',
-  '- [the propagation edges established so far, cause first: A -> B because <evidence>]',
+  '- [the propagation edges established so far, cause first: A -> B]',
   '',
   '## Open Hypotheses',
   '- [asserted but not yet grounded, and the query that would settle each]',
@@ -226,10 +240,10 @@ export const RCA_INSTRUCTION = [
   '- [the single next query or the decision to submit, or "(none)"]',
   '',
   'Rules:',
-  '- Preserve verbatim only the statements under Evidence Statements: a submitted node must cite the statement that grounds it, so those have to survive exactly. Every other query goes under Ground Already Covered as one line without its SQL — knowing the ground was covered is what stops a re-run, and the statement itself is not needed for that.',
-  '- Preserve exact service names, metric names, table and column names, timestamps, and numeric values. These are the evidence.',
+  '- No SQL text anywhere in the checkpoint. A query is one line under Ground Already Covered saying what it showed; the statement itself is in the notebook, and the resuming model reads it there when a submission has to cite it.',
+  '- Preserve exact service names, metric names, table and column names, timestamps, and the abnormal window. These are what a resuming model cannot re-derive without re-querying.',
   '- Never promote a hypothesis to a finding. If the evidence did not settle it, it stays under Open Hypotheses.',
   '- Do NOT mention this summarization request or that the context was compacted.',
   '- Output only the checkpoint text: do not call any tool or take any other action.',
-  '- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated checkpoint under the same structure.',
+  '- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated checkpoint under the same structure. The checkpoint must not grow from pass to pass — an investigation that has covered more ground states it more briefly, it does not accumulate.',
 ].join('\n')
