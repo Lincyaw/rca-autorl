@@ -29,6 +29,7 @@ import argparse
 import json
 import statistics
 import sys
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -52,6 +53,8 @@ class Sample:
     submitted: bool = False
     finish: str = ""
     error: str = ""
+    seconds: float = 0.0
+    steps: int = 0
 
 
 @dataclass
@@ -106,6 +109,7 @@ def run_sample(
         temperature=temperature,
     )
     case_dir = resolve_data_dir(sample, dataset_root)
+    started = time.monotonic()
     try:
         result = run_episode(
             dsh_home=dsh_home,
@@ -117,14 +121,22 @@ def run_sample(
             timeout=timeout,
         )
     except Exception as error:  # one lost episode must not lose the group
-        return Sample(case_id, session_id, error=f"{type(error).__name__}: {error}")
+        return Sample(
+            case_id,
+            session_id,
+            error=f"{type(error).__name__}: {error}",
+            seconds=time.monotonic() - started,
+        )
 
+    elapsed = time.monotonic() - started
     submission = submitted_result(result.events)
     out = Sample(
         case_id,
         result.session_id,
         submitted=submission is not None,
         finish=str(result.finish_reason),
+        seconds=elapsed,
+        steps=sum(1 for e in result.events if e.get("type") == "step/start"),
     )
     if submission is None:
         return out
@@ -204,7 +216,11 @@ def main(argv: list[str]) -> int:
         for done, sample in enumerate(pool.map(one, work), 1):
             results[sample.case_id].samples.append(sample)
             flag = f"{sample.score:.3f}" if sample.submitted else (sample.error or "no submission")
-            print(f"  [{done}/{len(work)}] case {sample.case_id}: {flag}", flush=True)
+            print(
+                f"  [{done}/{len(work)}] case {sample.case_id}: {flag} "
+                f"({sample.seconds:.0f}s, {sample.steps} steps)",
+                flush=True,
+            )
 
     if args.report:
         with Path(args.report).open("w", encoding="utf-8") as handle:
@@ -220,6 +236,8 @@ def main(argv: list[str]) -> int:
                                 "submitted": sample.submitted,
                                 "finish": sample.finish,
                                 "error": sample.error,
+                                "seconds": sample.seconds,
+                                "steps": sample.steps,
                             }
                         )
                         + "\n"
@@ -252,6 +270,20 @@ def report(cases: list[CaseResult], k: int) -> None:
         f"cases with spread > 0 {len(varied)}/{len(scored)} = {len(varied) / len(scored):.3f}"
         "  <- the fraction an RLOO batch can learn from"
     )
+
+    # Cost, because a rollout's wall-clock is what bounds how large an RL batch
+    # can be: K samples of one case run concurrently, but a training step waits
+    # for the slowest of them.
+    times = sorted(s.seconds for c in scored for s in c.samples if s.seconds)
+    steps = [s.steps for c in scored for s in c.samples if s.steps]
+    if times:
+        print()
+        print(
+            f"episode seconds       median {times[len(times) // 2]:.0f}  "
+            f"p90 {times[int(len(times) * 0.9)]:.0f}  max {times[-1]:.0f}"
+        )
+    if steps:
+        print(f"episode steps         median {sorted(steps)[len(steps) // 2]}  max {max(steps)}")
 
 
 if __name__ == "__main__":
