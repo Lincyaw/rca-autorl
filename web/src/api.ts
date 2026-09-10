@@ -19,7 +19,6 @@ export interface Step {
   result_head: string
   result_error: boolean
   input_tokens: number
-  output_tokens: number
 }
 
 export interface Compaction {

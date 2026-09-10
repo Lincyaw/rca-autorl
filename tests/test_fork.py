@@ -97,6 +97,25 @@ class ForkPrefixTest(unittest.TestCase):
         self.assertEqual(at_four["unnoted"], 0)
         self.assertEqual(fork_prefix(episode(), 5)["unnoted"], 1)
 
+    def test_a_notebook_read_is_neither_a_note_nor_a_payment(self) -> None:
+        """`take_note` with no content reads the notebook (`notebook.js`).
+
+        Counting it would put a blank note in the child's notebook, shifting
+        every later note id away from the ids the spliced history cites, and
+        clearing the debt would let the child past `noteLimit` for free.
+        """
+        events = episode()
+        events += [
+            ev("step/start", {"step": 6}, None),
+            assistant(6, "a6"),
+            *call(6, "c6", "take_note"),
+        ]
+        events += [ev("step/start", {"step": 7}, None)]
+        at_seven = fork_prefix(events, 7)
+        self.assertEqual(at_seven["notes"], ["geo is down"])
+        # Step 4's query is still unpaid; the read did not settle it.
+        self.assertEqual(at_seven["unnoted"], 1)
+
     def test_a_pruned_result_is_forked_as_the_model_saw_it(self) -> None:
         events = episode()
         pruned = next(e for e in events if e["type"] == "tool/result")

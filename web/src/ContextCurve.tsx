@@ -75,19 +75,14 @@ export function ContextCurve({ episode }: { episode: Episode }) {
  */
 function PassTable({ episode }: { episode: Episode }) {
   if (episode.compactions.length === 0) return null
-  const tokens = new Map(
-    episode.steps.filter(s => s.input_tokens > 0).map(s => [s.index, s.input_tokens]),
-  )
-  const indices = [...tokens.keys()].sort((a, b) => a - b)
+  // `episode.steps` is already ordered by index, so the two neighbours of a pass
+  // are a scan away — no index Map and no reversed copy per row.
+  const measured = episode.steps.filter(s => s.input_tokens > 0)
 
-  const around = (step: number) => {
-    const before = [...indices].reverse().find(i => i <= step)
-    const after = indices.find(i => i > step)
-    return {
-      before: before === undefined ? 0 : tokens.get(before)!,
-      after: after === undefined ? 0 : tokens.get(after)!,
-    }
-  }
+  const around = (step: number) => ({
+    before: measured.findLast(s => s.index <= step)?.input_tokens ?? 0,
+    after: measured.find(s => s.index > step)?.input_tokens ?? 0,
+  })
 
   return (
     <table className="grid">

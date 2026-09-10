@@ -15,16 +15,16 @@ export function Siblings({
   group: CaseGroup
   onOpen: (sessionId: string) => void
 }) {
-  const scores = group.episodes.map(e => e.score)
-  const best = Math.max(...scores)
-  const spread = best - Math.min(...scores)
+  // The server's own numbers, from the same `group_stats` the report tab prints,
+  // rather than a second definition of pass@k in TypeScript.
+  const { k, pass_1: pass1, pass_k: passK, spread } = group.stats.per_case[0]
+  const best = Math.max(...group.episodes.map(e => e.score))
 
   return (
     <div>
       <p>
-        <strong>{group.episodes.length}</strong> sample(s) ·{' '}
-        pass@1 <strong>{mean(scores).toFixed(3)}</strong> · pass@k{' '}
-        <strong>{best.toFixed(3)}</strong> · spread{' '}
+        <strong>{k}</strong> sample(s) · pass@1 <strong>{pass1.toFixed(3)}</strong> · pass@k{' '}
+        <strong>{passK.toFixed(3)}</strong> · spread{' '}
         <strong className={spread > 0 ? 'good' : 'bad'}>{spread.toFixed(3)}</strong>
         {spread === 0 && <span className="muted"> — zero advantage for every sibling</span>}
       </p>
@@ -144,6 +144,3 @@ function signature(step: Episode['steps'][number] | undefined): string {
   return `${step.tool} ${step.arguments}`.replace(/\s+/g, ' ')
 }
 
-function mean(values: number[]): number {
-  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0
-}

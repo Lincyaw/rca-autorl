@@ -18,19 +18,33 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict
-from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 
-from autorl.trajectory import Episode, case_of, find_sessions, group_stats, load_episode
+from autorl.trajectory import (
+    SESSION_FILE,
+    Episode,
+    case_dir_for,
+    case_of,
+    find_sessions,
+    group_stats,
+    load_episode,
+    session_paths,
+)
 
 #: Where to look for Harness homes. A home is any directory with `sessions/`.
 RUNS_ROOT = Path(os.getenv("RCA_RUNS_ROOT", ".runs")).expanduser()
-#: Where the corpus cases live, for the ground truth a score needs.
-CASES_ROOT = Path(os.getenv("RCA_DATASET_ROOT", "datapacks/ops-lite/cases")).expanduser()
+#: Where the corpus cases live, for the ground truth a score needs. Its own
+#: variable, not `RCA_DATASET_ROOT`: the training path sets that one to the
+#: corpus root (`datapacks/ops-lite`, per README) and `agent.resolve_data_dir`
+#: tries both it and its `cases/` child. Reading it here as the cases root would
+#: resolve `datapacks/ops-lite/batch-01KQ...`, find nothing, and score every
+#: episode 0.0 with no axes -- which renders exactly like a real negative result.
+CASES_ROOT = Path(os.getenv("RCA_CASES_ROOT", "datapacks/ops-lite/cases")).expanduser()
 #: 0.6 x 32768, the `thresholdRatio` in `agent/rca-harness/cordis.patch.yml`. A
 #: peak above it is a request that went out carrying more than the meter
 #: intended, which is how an episode reaches the window despite compacting.
@@ -48,32 +62,54 @@ def _home(run: str) -> Path:
 
 
 def _case_dir(case: str) -> Path | None:
-    directory = CASES_ROOT / case
-    return directory if directory.is_dir() else None
+    return case_dir_for(case, CASES_ROOT)
 
 
-def _load(path: Path) -> Episode:
-    """One episode, scored when its case is still on this machine."""
+def _one(home: Path, pattern: str, wanted: str, run: str) -> Episode:
+    """The single session a pattern matches, loaded and scored."""
+    path = next((home / "sessions").glob(pattern), None)
+    if path is None:
+        raise HTTPException(404, f"no episode {wanted!r} in {run!r}")
     return load_episode(path, case_dir=_case_dir(case_of(path)))
 
 
-@lru_cache(maxsize=8)
-def _episodes(home: str, _stamp: float) -> list[Episode]:
-    """Every episode of a run. Keyed by mtime so a finished run invalidates once."""
-    return [_load(path) for path in find_sessions(Path(home))]
+#: One snapshot per home, replaced rather than accumulated: `{home: (stamp, episodes)}`.
+#: An `lru_cache` keyed on the mtime grows instead of invalidating — while a sweep
+#: is running every request is a new key, so eight successive copies of the same
+#: 360-episode run stay resident (each `Episode` holds every step's reasoning and
+#: result head, so that is gigabytes for one run).
+_CACHE: dict[str, tuple[float, list[Episode]]] = {}
+#: Held while a snapshot is built. The endpoints are sync `def`, so FastAPI runs
+#: them on a threadpool and the two requests the UI fires together would
+#: otherwise both load all 360 logs.
+_LOADING = Lock()
 
 
 def episodes_of(run: str) -> list[Episode]:
+    """Every episode of a run, rebuilt only when something under it changed."""
     home = _home(run)
-    newest = max((p.stat().st_mtime for p in find_sessions(home)), default=0.0)
-    return _episodes(str(home), newest)
+    # One stat per session, and the sort `find_sessions` pays for is not needed
+    # to find a maximum.
+    stamp = max((p.stat().st_mtime for p in session_paths(home)), default=0.0)
+    key = str(home)
+    with _LOADING:
+        cached = _CACHE.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        episodes = [
+            load_episode(path, case_dir=_case_dir(case_of(path))) for path in find_sessions(home)
+        ]
+        _CACHE[key] = (stamp, episodes)
+        return episodes
 
 
 @app.get("/api/runs")
 def runs() -> list[dict[str, Any]]:
-    """Every Harness home under the runs root, newest first."""
+    """Every Harness home under the runs root, biggest first."""
     homes = [d for d in RUNS_ROOT.glob("*") if (d / "sessions").is_dir()]
-    found = [{"run": home.name, "episodes": sum(1 for _ in find_sessions(home))} for home in homes]
+    # `session_paths`, not `find_sessions`: ordering them by mtime would stat
+    # every one of a few hundred files per home just to count them.
+    found = [{"run": home.name, "episodes": sum(1 for _ in session_paths(home))} for home in homes]
     return sorted(found, key=lambda r: -int(r["episodes"]))
 
 
@@ -85,17 +121,28 @@ def episodes(run: str) -> list[dict[str, Any]]:
 
 @app.get("/api/runs/{run}/episodes/{session_id}")
 def episode(run: str, session_id: str) -> dict[str, Any]:
-    """One episode in full: every step's reasoning, call, and result head."""
-    for found in episodes_of(run):
-        if found.session_id == session_id:
-            return _detail(found)
-    raise HTTPException(404, f"no episode {session_id!r} in {run!r}")
+    """One episode in full: every step's reasoning, call, and result head.
+
+    Resolved by path rather than by scanning the run: the session id is the
+    directory name, so this reads one log instead of all of them.
+    """
+    return _detail(_one(_home(run), f"*/{session_id}/{SESSION_FILE}", session_id, run))
 
 
 @app.get("/api/runs/{run}/cases/{case}")
 def case(run: str, case: str) -> dict[str, Any]:
-    """The K samples of one case, for the sibling comparison."""
-    group = [e for e in episodes_of(run) if e.case == case]
+    """The K samples of one case, for the sibling comparison.
+
+    Globbed on the snapshot directory `case_of` reads the case out of, so this
+    loads the group rather than the run.
+    """
+    home = _home(run)
+    truth = _case_dir(case)
+    group = [
+        load_episode(path, case_dir=truth)
+        for path in sorted(session_paths(home))
+        if case_of(path) == case
+    ]
     if not group:
         raise HTTPException(404, f"no episode on case {case!r} in {run!r}")
     return {"case": case, "stats": group_stats(group), "episodes": [_detail(e) for e in group]}

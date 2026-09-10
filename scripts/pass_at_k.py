@@ -32,7 +32,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -187,18 +187,22 @@ def main(argv: list[str]) -> int:
     dsh_home.mkdir(parents=True, exist_ok=True)
     require_bundle(dsh_home)
 
-    # One flat work list of (case, replica) so every endpoint stays busy: a
+    # One flat work list of (case, endpoint) so every endpoint stays busy: a
     # per-case barrier would leave three servers idle while the longest episode
-    # of a group finishes.
-    work = [(case, i) for case in cases for i in range(args.samples)]
+    # of a group finishes. The endpoint is assigned over the flat list rather than
+    # over each case's K replicas, which divides evenly whatever K is — cycling
+    # per case gives 3 endpoints and K=8 a 3/3/2 split, so two of them carry 135
+    # episodes to the third's 90 and the sweep waits on them.
+    replicas = [case for case in cases for _ in range(args.samples)]
+    work = [(case, endpoints[n % len(endpoints)]) for n, case in enumerate(replicas)]
     print(f"{len(cases)} case(s) x {args.samples} sample(s) over {len(endpoints)} endpoint(s)")
 
-    def one(item: tuple[dict[str, Any], int]) -> Sample:
-        case, index = item
+    def one(item: tuple[dict[str, Any], str]) -> Sample:
+        case, base_url = item
         return run_sample(
             case,
             dsh_home=dsh_home,
-            base_url=endpoints[index % len(endpoints)],
+            base_url=base_url,
             api_key=args.api_key,
             model=args.model,
             scenario=args.scenario,
@@ -226,22 +230,7 @@ def main(argv: list[str]) -> int:
         with Path(args.report).open("w", encoding="utf-8") as handle:
             for case in results.values():
                 for sample in case.samples:
-                    handle.write(
-                        json.dumps(
-                            {
-                                "case_id": sample.case_id,
-                                "source": case.source,
-                                "session_id": sample.session_id,
-                                "score": sample.score,
-                                "submitted": sample.submitted,
-                                "finish": sample.finish,
-                                "error": sample.error,
-                                "seconds": sample.seconds,
-                                "steps": sample.steps,
-                            }
-                        )
-                        + "\n"
-                    )
+                    handle.write(json.dumps({**asdict(sample), "source": case.source}) + "\n")
 
     report(list(results.values()), args.samples)
     return 0

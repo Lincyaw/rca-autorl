@@ -54,8 +54,12 @@ def fork_prefix(
     notes: list[str] = list(base["notes"]) if base else []
     unnoted = int(base["unnoted"]) if base else 0
     for name, arguments in accepted_calls(before):
-        if name == "take_note":
-            notes.append(str(arguments.get("content", "")).strip())
+        # A `take_note` with no content is a read, not a write (`notebook.js`):
+        # appending it would put a blank note in the child's notebook and shift
+        # every later note id away from the ids the spliced history cites, and
+        # clearing the debt would hand the child a free pass through `noteLimit`.
+        if name == "take_note" and str(arguments.get("content", "")).strip():
+            notes.append(str(arguments["content"]).strip())
             unnoted = 0
         elif name == "sql":
             unnoted += 1

@@ -13,6 +13,11 @@ stopped is spread over four event types: the last `turn/end`'s reason, the
 serving window, and the tool results that came back as errors. Reading that by
 hand took a dozen ad-hoc greps per episode.
 
+The readers are separate — `read_steps`, `read_compactions`, `read_finish` — so
+the training workflow can take the few numbers it reports without a session file
+or a score, and the dashboard can assemble the whole `Episode` from the same
+three.
+
 The one number the harness does not record is a failed compaction request's own
 prompt size: `compaction.js` throws before `assembler.usage` exists. Until that
 gap is closed, `Compaction.shadowed_tokens` on a failed pass is the closest
@@ -24,6 +29,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +57,6 @@ class Step:
     # curve that runs into the window; a step with no assistant message (a
     # compaction pass, an aborted request) carries 0 and is skipped when plotted.
     input_tokens: int = 0
-    output_tokens: int = 0
 
 
 @dataclass
@@ -84,15 +89,11 @@ class Episode:
 
     @property
     def peak_input_tokens(self) -> int:
-        return max((s.input_tokens for s in self.steps), default=0)
+        return peak_input_tokens(self.steps)
 
     @property
     def tool_counts(self) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for step in self.steps:
-            if step.tool:
-                counts[step.tool] = counts.get(step.tool, 0) + 1
-        return counts
+        return tool_counts(self.steps)
 
     def summary(self) -> dict[str, Any]:
         """The one row a list view shows, without the per-step detail."""
@@ -112,27 +113,53 @@ class Episode:
         }
 
 
+def peak_input_tokens(steps: Sequence[Step]) -> int:
+    """The largest context any of these steps was served on."""
+    return max((s.input_tokens for s in steps), default=0)
+
+
+def tool_counts(steps: Sequence[Step]) -> dict[str, int]:
+    """How many times each tool was called over these steps."""
+    counts: dict[str, int] = {}
+    for step in steps:
+        if step.tool:
+            counts[step.tool] = counts.get(step.tool, 0) + 1
+    return counts
+
+
 def read_events(path: Path) -> list[dict[str, Any]]:
-    """A session log's events, skipping lines a run in flight left half-written."""
+    """A session log's events, skipping lines a run in flight left half-written.
+
+    Streamed rather than `read_text().splitlines()`: a session log runs to a
+    couple of megabytes, and materializing the whole string and then a list of
+    every line triples the transient footprint of a file that is being read
+    several at a time.
+    """
     events = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
     return events
 
 
-def find_sessions(home: Path) -> Iterator[Path]:
-    """Every session log under a Harness home, newest first.
+def session_paths(home: Path) -> Iterator[Path]:
+    """Every session log under a Harness home, in whatever order the glob gives.
 
     The directory a session sits in is the snapshot path with separators
-    replaced, which is where `case_of` reads the corpus case from.
+    replaced, which is where `case_of` reads the corpus case from. Counting them,
+    or taking the newest mtime, does not need them ordered.
     """
-    sessions = (home / "sessions").glob(f"*/*/{SESSION_FILE}")
-    yield from sorted(sessions, key=lambda p: p.stat().st_mtime, reverse=True)
+    yield from (home / "sessions").glob(f"*/*/{SESSION_FILE}")
+
+
+def find_sessions(home: Path) -> Iterator[Path]:
+    """Every session log under a Harness home, newest first."""
+    yield from sorted(session_paths(home), key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def case_of(path: Path) -> str:
@@ -150,6 +177,29 @@ def case_of(path: Path) -> str:
     return name
 
 
+def case_dir_for(case: str, root: Path) -> Path | None:
+    """The snapshot a case ran on under `root`, or None when it is not here.
+
+    `datapacks/ops-lite` keeps its snapshots in a `cases/` child beside the
+    manifest, so a root may name either level — the same tolerance
+    `agent.resolve_data_dir` gives the rollout, without importing the trainer.
+    """
+    for candidate in (root / case, root / "cases" / case):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+@cache
+def _truth(case_dir: str) -> Any:
+    """The annotation for one case, read and validated once.
+
+    A group of K siblings shares a case, so the uncached path validates the same
+    `Scenario` K times: 360 reads for the 45 annotations of a K=8 sweep.
+    """
+    return truth_for_case(Path(case_dir))
+
+
 def load_episode(path: Path, *, case_dir: Path | None = None) -> Episode:
     """One session as an `Episode`, scored when a case directory is at hand.
 
@@ -158,25 +208,29 @@ def load_episode(path: Path, *, case_dir: Path | None = None) -> Episode:
     and because a session whose snapshot has since moved is still worth reading.
     """
     events = read_events(path)
-    episode = Episode(session_id=path.parent.name, case=case_of(path))
-    _fill_steps(episode, events)
-    _fill_compactions(episode, events)
-    _fill_finish(episode, events)
-
+    finish, error = read_finish(events)
+    episode = Episode(
+        session_id=path.parent.name,
+        case=case_of(path),
+        finish=finish,
+        error=error,
+        steps=read_steps(events),
+        compactions=read_compactions(events),
+    )
     episode.submission = submitted_result(events)
     if case_dir is not None:
         # Also when nothing was submitted: `answer_of(None, truth)` claims
         # nothing, so it scores zero and still carries the truth. That is what
         # makes "found none of these six nodes" reviewable, rather than
         # indistinguishable from a case with nothing to find.
-        episode.answer = answer_of(episode.submission, truth_for_case(case_dir))
+        episode.answer = answer_of(episode.submission, _truth(str(case_dir)))
         # Flat weights: the difficulty weighting of the method spec is defined
         # against a sibling group, and one episode is not a group.
         episode.score = weighted_score(episode.answer, {})
     return episode
 
 
-def _fill_steps(episode: Episode, events: Sequence[dict[str, Any]]) -> None:
+def read_steps(events: Sequence[dict[str, Any]]) -> list[Step]:
     """One `Step` per `step/start`, filled from the events that follow it.
 
     Keyed by the step number the harness writes rather than by arrival order: a
@@ -210,9 +264,7 @@ def _fill_steps(episode: Episode, events: Sequence[dict[str, Any]]) -> None:
                     step.reasoning += str(block.get("text") or "")
                 elif block.get("type") == "text":
                     step.text += str(block.get("text") or "")
-            usage = data.get("usage") or {}
-            step.input_tokens = int(usage.get("inputTokens") or 0)
-            step.output_tokens = int(usage.get("outputTokens") or 0)
+            step.input_tokens = int((data.get("usage") or {}).get("inputTokens") or 0)
         elif kind == "tool/call":
             step = at(data)
             if step is None:
@@ -223,7 +275,7 @@ def _fill_steps(episode: Episode, events: Sequence[dict[str, Any]]) -> None:
             if result is not None:
                 step.result_head, step.result_error = _result_text(result)
 
-    episode.steps = [steps[i] for i in sorted(steps)]
+    return [steps[i] for i in sorted(steps)]
 
 
 def _result_text(event: dict[str, Any]) -> tuple[str, bool]:
@@ -238,7 +290,7 @@ def _result_text(event: dict[str, Any]) -> tuple[str, bool]:
     return "".join(parts)[:RESULT_HEAD], error
 
 
-def _fill_compactions(episode: Episode, events: Sequence[dict[str, Any]]) -> None:
+def read_compactions(events: Sequence[dict[str, Any]]) -> list[Compaction]:
     """One `Compaction` per pass, pairing each start with its summary and end.
 
     A pass writes `compaction/start`, then `compaction/summary` only if the
@@ -257,14 +309,12 @@ def _fill_compactions(episode: Episode, events: Sequence[dict[str, Any]]) -> Non
             last_step = int(data["step"])
         if kind == "compaction/start":
             passes.append(Compaction(at_step=last_step))
-        elif not passes:
-            continue
-        elif kind == "compaction/summary":
+        elif passes and kind == "compaction/summary":
             passes[-1].shadowed_tokens = int(data.get("shadowedTokenCount") or 0)
             passes[-1].summary = _summary_text(data)
-        elif kind == "compaction/end" and data.get("error"):
+        elif passes and kind == "compaction/end" and data.get("error"):
             passes[-1].error = str(data["error"])
-    episode.compactions = passes
+    return passes
 
 
 def _summary_text(data: dict[str, Any]) -> str:
@@ -275,8 +325,8 @@ def _summary_text(data: dict[str, Any]) -> str:
     )
 
 
-def _fill_finish(episode: Episode, events: Sequence[dict[str, Any]]) -> None:
-    """How the episode ended, from the last `turn/end` that carries a reason.
+def read_finish(events: Sequence[dict[str, Any]]) -> tuple[str, str]:
+    """How the episode ended and why, from the last `turn/end` carrying a reason.
 
     The reason is a dict on some harness versions and its repr on others, so the
     kind is read structurally where possible and by substring where not.
@@ -288,38 +338,35 @@ def _fill_finish(episode: Episode, events: Sequence[dict[str, Any]]) -> None:
         if reason is None:
             continue
         if isinstance(reason, dict):
-            episode.finish = str(reason.get("kind") or "")
             failure = reason.get("error")
-            if isinstance(failure, dict):
-                episode.error = str(failure.get("message") or "")
-            return
+            message = str(failure.get("message") or "") if isinstance(failure, dict) else ""
+            return str(reason.get("kind") or ""), message
         text = str(reason)
-        episode.finish = "error" if "'error'" in text else text[:60]
-        episode.error = text if episode.finish == "error" else ""
-        return
+        if "'error'" in text:
+            return "error", text
+        return text[:60], ""
+    return "", ""
 
 
 def episode_metrics(events: Sequence[dict[str, Any]]) -> dict[str, float]:
     """What a rollout is worth logging, straight off the events it produced.
 
-    The workflow calls this rather than building an `Episode`, because it has no
+    The workflow calls this rather than loading an `Episode`, because it has no
     session file yet and needs no scoring — the reward it already computed is the
     outcome. Everything here is a fact about how the episode ran: how far it got,
     how close to the window it came, and whether compaction held.
     """
-    episode = Episode(session_id="", case="")
-    _fill_steps(episode, events)
-    _fill_compactions(episode, events)
-    _fill_finish(episode, events)
-    tools = episode.tool_counts
+    steps = read_steps(events)
+    passes = read_compactions(events)
+    tools = tool_counts(steps)
     return {
-        "steps": float(len(episode.steps)),
+        "steps": float(len(steps)),
         "sql_calls": float(tools.get("sql", 0)),
         "note_calls": float(tools.get("take_note", 0)),
-        "peak_input_tokens": float(episode.peak_input_tokens),
-        "compactions": float(len(episode.compactions)),
-        "compaction_failures": float(sum(1 for c in episode.compactions if c.error)),
-        "completed": float(episode.finish == "completed"),
+        "peak_input_tokens": float(peak_input_tokens(steps)),
+        "compactions": float(len(passes)),
+        "compaction_failures": float(sum(1 for c in passes if c.error)),
+        "completed": float(read_finish(events)[0] == "completed"),
     }
 
 
@@ -379,10 +426,17 @@ __all__ = [
     "Compaction",
     "Episode",
     "Step",
+    "case_dir_for",
     "case_of",
     "episode_metrics",
     "find_sessions",
     "group_stats",
     "load_episode",
+    "peak_input_tokens",
+    "read_compactions",
     "read_events",
+    "read_finish",
+    "read_steps",
+    "session_paths",
+    "tool_counts",
 ]
