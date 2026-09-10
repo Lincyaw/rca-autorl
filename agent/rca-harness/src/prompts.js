@@ -82,6 +82,10 @@ export const notebookIndex = body =>
 export const unknownNoteId = (id, known) =>
   `no note ${JSON.stringify(id)} in the notebook; it holds ${known}`
 
+/** What is left where an earlier notebook read used to be. */
+export const foldedNotebookRead = () =>
+  `(an earlier notebook read, folded away — call \`${NOTE_TOOL}\` again for the notes you need)`
+
 /**
  * What the model is told when it has queried without noting. Twice per debt
  * cycle, not once per query: the notice is a message that stays in the surface
