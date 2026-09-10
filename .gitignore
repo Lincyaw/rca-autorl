@@ -15,6 +15,10 @@ build/
 dist/
 *.egg-info/
 
+# Node (the dashboard in web/; `dist/` is already ignored above)
+node_modules/
+*.tsbuildinfo
+
 # IDE
 .vscode/
 .idea/

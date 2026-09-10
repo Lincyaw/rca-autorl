@@ -91,12 +91,32 @@ weighting), `centring` (`rloo`, `grpo`, `remax`), and `fork_every` with
 `fork_siblings` and `fork_continuations` (0 is off). The config comments
 explain the token-budget arithmetic.
 
+## Reading the trajectories
+
+Rollouts and collections leave `dsh` session logs under a Harness home.
+`autorl.web` serves them and `web/` renders four views over one episode: the
+timeline (each step's reasoning, statement and result), the context curve
+against the compaction threshold and the serving window, the K siblings of a
+case with their spread, and the submitted graph against the annotation.
+
+```bash
+uvicorn autorl.web:app --port 8000       # beside the runs, on the training host
+cd web && pnpm install && pnpm dev       # http://localhost:5173
+```
+
+`RCA_RUNS_ROOT` (default `.runs`) is where it looks for homes, and
+`RCA_DATASET_ROOT` (default `datapacks/ops-lite/cases`) is where it reads the
+ground truth a score needs. To read a remote host's runs from a laptop, forward
+the port — `ssh -L 8000:127.0.0.1:8000 <host>` — and run the frontend locally;
+it needs no GPU. `GET /api/runs/<run>/report` is the same numbers as markdown.
+
 ## Validation
 
 ```bash
 uv sync --dev && uv run pre-commit install
 ./scripts/check.sh                               # ruff, mypy, generated vocabulary.js
 python -m unittest discover -s tests
+cd web && pnpm build                             # tsc --strict over the dashboard
 ```
 
 `check.sh` and `autorl.dataset --check` pass without a GPU.

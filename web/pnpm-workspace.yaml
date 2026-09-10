@@ -1,0 +1,4 @@
+# vite bundles through esbuild, whose install script fetches the platform
+# binary. pnpm 12 blocks install scripts until they are named here.
+allowBuilds:
+  esbuild: true
