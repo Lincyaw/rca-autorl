@@ -1,7 +1,7 @@
 import { ToolResultPruner } from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import { trace } from './debug.js'
 import { unnotedCount } from './notebook.js'
-import { NOTE_TOOL, SQL_TOOL } from './prompts.js'
+import { foldedNotebookRead, NOTE_TOOL, SQL_TOOL } from './prompts.js'
 
 /**
  * The tool-result pruner, made note-aware.
@@ -13,9 +13,16 @@ import { NOTE_TOOL, SQL_TOOL } from './prompts.js'
  *
  * This subclass protects two things. The `sql` results that arrived since the
  * last note stay whole — bounded by `noteEvery` thanks to the note gate, so
- * pruning becomes strictly "after the finding was written down". And every
- * notebook read stays whole, because the checkpoint template keeps conclusions
- * and leaves the evidence in the notebook.
+ * pruning becomes strictly "after the finding was written down". And the latest
+ * notebook read stays whole, because the checkpoint keeps the investigation's
+ * position and leaves the evidence in the notebook.
+ *
+ * An older notebook read is folded away entirely rather than pruned. Cut to a
+ * head and a tail it would still look like a notebook, with no indication of
+ * which notes went missing — a stale full print is merely wasteful, but a
+ * silently partial one gets cited. Folding says what it was and how to get it
+ * back, which is cheap now that a note is addressable by name and every
+ * checkpoint carries the index of those names.
  *
  * The window counts `sql` results only, because the ledger does: `recordUnnoted`
  * fires for `sql` and nothing else (`notebook.js`). Taking the last N results
@@ -36,32 +43,37 @@ import { NOTE_TOOL, SQL_TOOL } from './prompts.js'
  * through every `pruneContent` call, so a module-level set is exactly as scoped.
  */
 let protectedContent = new WeakSet()
+let foldedContent = new WeakSet()
 
 export class NoteAwarePruner extends ToolResultPruner {
   pruneSession(session) {
     protectedContent = new WeakSet()
+    foldedContent = new WeakSet()
     const unnoted = unnotedCount(session.id)
     const { sql, notes } = resultsByTool(session)
     // The unnoted window, over `sql` results only — see above.
     for (const event of unnoted > 0 ? sql.slice(-unnoted) : []) {
       protect(event)
     }
-    // Every notebook read, whatever the debt. The checkpoint template keeps
-    // conclusions and leaves the evidence here, so a read is the only route back
-    // to a statement a submission has to cite. Cut to a 200-char head and a
-    // 120-char tail it would still look like a notebook, with no indication of
-    // which notes went missing — a stale full print is merely wasteful, but a
-    // silently partial one gets cited.
-    for (const event of notes) {
-      protect(event)
+    // The latest notebook read whole, whatever the debt; every earlier one
+    // folded rather than pruned.
+    for (const [index, event] of notes.entries()) {
+      if (index === notes.length - 1) protect(event)
+      else fold(event)
     }
     const result = super.pruneSession(session)
-    trace('pruneSession', { unnoted, notes: notes.length, pruned: result.pruned.length, charsRemoved: result.charsRemoved })
+    trace('pruneSession', { unnoted, notes: notes.length, folded: Math.max(0, notes.length - 1), pruned: result.pruned.length, charsRemoved: result.charsRemoved })
     return result
   }
 
   pruneContent(blocks) {
     if (protectedContent.has(blocks)) return null
+    if (foldedContent.has(blocks)) {
+      const folded = [{ type: 'text', text: foldedNotebookRead() }]
+      // A replacement has to be smaller than what it replaces; a read shorter
+      // than its own marker is already as small as it gets.
+      return this.measureContent(folded) < this.measureContent(blocks) ? folded : null
+    }
     return super.pruneContent(blocks)
   }
 }
@@ -69,6 +81,11 @@ export class NoteAwarePruner extends ToolResultPruner {
 function protect(event) {
   const block = event.data.message.content[0]
   if (block?.content !== undefined) protectedContent.add(block.content)
+}
+
+function fold(event) {
+  const block = event.data.message.content[0]
+  if (block?.content !== undefined) foldedContent.add(block.content)
 }
 
 /**
